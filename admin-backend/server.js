@@ -17,10 +17,7 @@ const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!DATABASE_URL) {
-  throw new Error("DATABASE_URL is required");
-}
-
+if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error("JWT_SECRET must contain at least 32 characters");
 }
@@ -30,10 +27,7 @@ const allowedOrigins = (process.env.ADMIN_ORIGIN || "")
   .map(v => v.trim().replace(/\/$/, ""))
   .filter(Boolean);
 
-app.use(helmet({
-  contentSecurityPolicy: false
-}));
-
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "20kb" }));
 
 app.use(cors({
@@ -108,7 +102,6 @@ async function init() {
     );
   `);
 
-  // ترقية قاعدة البيانات إذا كانت أنشئت بالنسخة السابقة
   await db.query(`
     ALTER TABLE admin_account
     ADD COLUMN IF NOT EXISTS must_change boolean NOT NULL DEFAULT true
@@ -136,6 +129,17 @@ async function init() {
     VALUES ('maintenance', 'false')
     ON CONFLICT (key) DO NOTHING
   `);
+
+  // التأكد من وجود جدول التتبع في قاعدة البيانات المشتركة
+  const tracker = await db.query(`
+    SELECT to_regclass('public.tracker_visits') AS table_name
+  `);
+
+  console.log(
+    tracker.rows[0].table_name
+      ? "Tracker table connected"
+      : "Tracker table not found yet"
+  );
 
   console.log("Database initialized");
 }
@@ -167,9 +171,7 @@ async function auth(req, res, next) {
       : "";
 
     if (!token) {
-      return res.status(401).json({
-        error: "سجّل الدخول أولاً"
-      });
+      return res.status(401).json({ error: "سجّل الدخول أولاً" });
     }
 
     const payload = jwt.verify(token, JWT_SECRET);
@@ -189,8 +191,7 @@ async function auth(req, res, next) {
 
     req.admin = result.rows[0];
 
-    if (req.admin.must_change &&
-        req.path !== "/api/credentials") {
+    if (req.admin.must_change && req.path !== "/api/credentials") {
       return res.status(403).json({
         error: "يجب تغيير كلمة المرور الأولية أولاً",
         mustChangePassword: true
@@ -205,20 +206,15 @@ async function auth(req, res, next) {
   }
 }
 
-// فحص صحة الخادم وقاعدة البيانات
 app.get("/health", async (req, res) => {
   try {
     await db.query("SELECT 1");
     res.json({ ok: true, database: "connected" });
   } catch {
-    res.status(503).json({
-      ok: false,
-      database: "unavailable"
-    });
+    res.status(503).json({ ok: false, database: "unavailable" });
   }
 });
 
-// تسجيل الدخول
 app.post("/api/login", loginLimiter, async (req, res) => {
   try {
     const username = String(req.body.username || "");
@@ -234,7 +230,6 @@ app.post("/api/login", loginLimiter, async (req, res) => {
         account.username !== username ||
         !(await bcrypt.compare(password, account.password_hash))) {
       await log("تسجيل الدخول", "مرفوض");
-
       return res.status(401).json({
         error: "اسم المستخدم أو كلمة المرور غير صحيحة"
       });
@@ -248,14 +243,10 @@ app.post("/api/login", loginLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error.message);
-
-    return res.status(500).json({
-      error: "حدث خطأ داخلي"
-    });
+    return res.status(500).json({ error: "حدث خطأ داخلي" });
   }
 });
 
-// تغيير بيانات الدخول، ويستخدم أيضًا لأول دخول
 app.post("/api/credentials", auth, actionLimiter, async (req, res) => {
   try {
     const username = String(req.body.username || "");
@@ -309,14 +300,13 @@ app.post("/api/credentials", auth, actionLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Credentials error:", error.message);
-
     return res.status(500).json({
       error: "تعذر تحديث بيانات الدخول"
     });
   }
 });
 
-// استقبال إحصائيات الزيارات عند ربط الموقع بها
+// استقبال التتبع القديم، مع إبقائه متوافقًا
 app.post("/api/track", trackLimiter, async (req, res) => {
   try {
     const ua = req.headers["user-agent"] || "";
@@ -354,29 +344,43 @@ app.post("/api/track", trackLimiter, async (req, res) => {
   }
 });
 
-// إحصائيات لوحة الإدارة
+// إحصائيات لوحة الإدارة من جدول التتبع الحقيقي
 app.get("/api/overview", auth, async (req, res) => {
   try {
+    const exists = await db.query(`
+      SELECT to_regclass('public.tracker_visits') AS table_name
+    `);
+
+    if (!exists.rows[0].table_name) {
+      return res.status(503).json({
+        error: "جدول التتبع غير موجود في قاعدة البيانات المشتركة"
+      });
+    }
+
     const [today, month, active, visits, setting] = await Promise.all([
       db.query(`
         SELECT count(*)::int AS n
-        FROM page_views
-        WHERE created_at >= date_trunc('day', now())
+        FROM tracker_visits
+        WHERE visited_at >= date_trunc('day', now())
       `),
       db.query(`
         SELECT count(*)::int AS n
-        FROM page_views
-        WHERE created_at >= now() - interval '30 days'
+        FROM tracker_visits
+        WHERE visited_at >= now() - interval '30 days'
       `),
       db.query(`
         SELECT count(*)::int AS n
-        FROM page_views
-        WHERE created_at >= now() - interval '5 minutes'
+        FROM tracker_visits
+        WHERE visited_at >= now() - interval '5 minutes'
       `),
       db.query(`
-        SELECT *
-        FROM page_views
-        ORDER BY created_at DESC
+        SELECT id, visited_at AS created_at,
+               page_path, referrer,
+               'غير متاح' AS device,
+               'غير متاح' AS browser,
+               COALESCE(NULLIF(referrer, ''), 'مباشر') AS source
+        FROM tracker_visits
+        ORDER BY visited_at DESC
         LIMIT 30
       `),
       db.query(`
@@ -397,14 +401,12 @@ app.get("/api/overview", auth, async (req, res) => {
     });
   } catch (error) {
     console.error("Overview error:", error.message);
-
     return res.status(500).json({
       error: "تعذر تحميل الإحصائيات"
     });
   }
 });
 
-// تفعيل أو إلغاء وضع الصيانة في إعدادات الإدارة
 app.post("/api/maintenance", auth, actionLimiter, async (req, res) => {
   try {
     const enabled = req.body.enabled === true;
@@ -417,10 +419,7 @@ app.post("/api/maintenance", auth, actionLimiter, async (req, res) => {
       [String(enabled)]
     );
 
-    await log(
-      "وضع الصيانة",
-      enabled ? "تفعيل" : "إلغاء"
-    );
+    await log("وضع الصيانة", enabled ? "تفعيل" : "إلغاء");
 
     return res.json({
       maintenance: enabled,
@@ -428,14 +427,12 @@ app.post("/api/maintenance", auth, actionLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Maintenance error:", error.message);
-
     return res.status(500).json({
       error: "تعذر تحديث وضع الصيانة"
     });
   }
 });
 
-// سجل العمليات
 app.get("/api/logs", auth, async (req, res) => {
   try {
     const result = await db.query(
@@ -448,21 +445,17 @@ app.get("/api/logs", auth, async (req, res) => {
     return res.json({ logs: result.rows });
   } catch (error) {
     console.error("Logs error:", error.message);
-
     return res.status(500).json({
       error: "تعذر تحميل السجلات"
     });
   }
 });
 
-// إيقاف أو استئناف خدمة Render محددة
 app.post("/api/site/:action", auth, actionLimiter, async (req, res) => {
   const action = req.params.action;
 
   if (!["suspend", "resume"].includes(action)) {
-    return res.status(400).json({
-      error: "عملية غير معروفة"
-    });
+    return res.status(400).json({ error: "عملية غير معروفة" });
   }
 
   const renderKey = process.env.RENDER_API_KEY;
@@ -488,9 +481,7 @@ app.post("/api/site/:action", auth, actionLimiter, async (req, res) => {
 
     if (!response.ok) {
       const details = await response.text();
-
       console.error("Render API error:", response.status, details);
-
       return res.status(502).json({
         error: `تعذر تنفيذ العملية لدى Render (${response.status})`
       });
@@ -501,19 +492,15 @@ app.post("/api/site/:action", auth, actionLimiter, async (req, res) => {
       "تم إرسال الطلب"
     );
 
-    return res.json({
-      message: "تم إرسال الطلب إلى Render"
-    });
+    return res.json({ message: "تم إرسال الطلب إلى Render" });
   } catch (error) {
     console.error("Render request error:", error.message);
-
     return res.status(502).json({
       error: "تعذر الاتصال بـ Render"
     });
   }
 });
 
-// أخطاء CORS والطلبات غير المعالجة
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
 
@@ -524,13 +511,9 @@ app.use((err, req, res, next) => {
   }
 
   console.error("Request error:", err.message);
-
-  return res.status(500).json({
-    error: "حدث خطأ داخلي"
-  });
+  return res.status(500).json({ error: "حدث خطأ داخلي" });
 });
 
-// لا يبدأ الخادم إلا بعد نجاح تهيئة قاعدة البيانات
 async function start() {
   try {
     await init();
