@@ -17,7 +17,9 @@ const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is required");
+}
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error("JWT_SECRET must contain at least 32 characters");
@@ -36,6 +38,7 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
       return callback(null, true);
     }
+
     return callback(new Error("Origin not allowed"));
   },
   methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -71,6 +74,140 @@ const actionLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false
 });
+
+// ========================================
+// CUSTOM PERMISSIONS
+// ========================================
+
+const PERMISSION_CATALOG = {
+  "overview.view": {
+    label: "عرض لوحة المعلومات",
+    group: "overview"
+  },
+  "visitors.view": {
+    label: "عرض الزوار",
+    group: "visitors"
+  },
+  "system.view": {
+    label: "عرض النظام",
+    group: "system"
+  },
+  "security.view": {
+    label: "عرض الأمان",
+    group: "security"
+  },
+  "logs.view": {
+    label: "عرض السجلات",
+    group: "logs"
+  },
+  "maintenance.manage": {
+    label: "إدارة وضع الصيانة",
+    group: "control"
+  },
+  "render.manage": {
+    label: "التحكم في Render",
+    group: "control"
+  },
+  "staff.manage": {
+    label: "إدارة الموظفين",
+    group: "staff"
+  }
+};
+
+const DEFAULT_STAFF_PERMISSIONS = [
+  "overview.view",
+  "visitors.view",
+  "system.view",
+  "security.view",
+  "logs.view"
+];
+
+function isSuperAdmin(admin) {
+  return (
+    admin?.type === "super" &&
+    admin?.role === "SUPER_ADMIN" &&
+    Number(admin?.id) === 1
+  );
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (!isSuperAdmin(req.admin)) {
+    return res.status(403).json({
+      error: "هذه الصلاحية خاصة بالسوبر أدمن"
+    });
+  }
+
+  next();
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    if (isSuperAdmin(req.admin)) {
+      return next();
+    }
+
+    if (!req.admin?.permissions?.includes(permission)) {
+      return res.status(403).json({
+        error: "ليس لديك صلاحية لتنفيذ هذه العملية",
+        requiredPermission: permission
+      });
+    }
+
+    next();
+  };
+}
+
+function validatePermissions(value) {
+  if (!Array.isArray(value)) return false;
+
+  if (value.length > Object.keys(PERMISSION_CATALOG).length) {
+    return false;
+  }
+
+  return (
+    value.every(permission =>
+      typeof permission === "string" &&
+      Object.prototype.hasOwnProperty.call(
+        PERMISSION_CATALOG,
+        permission
+      )
+    ) &&
+    new Set(value).size === value.length
+  );
+}
+
+async function getStaffPermissions(staffId) {
+  const result = await db.query(
+    `SELECT permission_key
+     FROM admin_staff_permissions
+     WHERE staff_id = $1 AND granted = true
+     ORDER BY permission_key`,
+    [staffId]
+  );
+
+  return result.rows.map(row => row.permission_key);
+}
+
+async function saveStaffPermissions(client, staffId, permissions) {
+  await client.query(
+    `DELETE FROM admin_staff_permissions
+     WHERE staff_id = $1`,
+    [staffId]
+  );
+
+  for (const permission of permissions) {
+    await client.query(
+      `INSERT INTO admin_staff_permissions
+       (staff_id, permission_key, granted)
+       VALUES ($1, $2, true)
+       ON CONFLICT (staff_id, permission_key)
+       DO UPDATE SET
+         granted = true,
+         updated_at = now()`,
+      [staffId, permission]
+    );
+  }
+}
 
 // ========================================
 // DATABASE
@@ -117,6 +254,15 @@ async function init() {
       must_change boolean NOT NULL DEFAULT true,
       created_at timestamptz DEFAULT now()
     );
+
+    CREATE TABLE IF NOT EXISTS admin_staff_permissions (
+      staff_id bigint NOT NULL
+        REFERENCES admin_staff(id) ON DELETE CASCADE,
+      permission_key text NOT NULL,
+      granted boolean NOT NULL DEFAULT true,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (staff_id, permission_key)
+    );
   `);
 
   const found = await db.query(
@@ -143,6 +289,24 @@ async function init() {
     );
 
     console.log("Initial SUPER ADMIN created");
+  }
+
+  // Give existing staff their safe baseline permissions.
+  // Existing permission records are preserved.
+  const existingStaff = await db.query(
+    "SELECT id FROM admin_staff"
+  );
+
+  for (const staff of existingStaff.rows) {
+    for (const permission of DEFAULT_STAFF_PERMISSIONS) {
+      await db.query(
+        `INSERT INTO admin_staff_permissions
+         (staff_id, permission_key, granted)
+         VALUES ($1, $2, true)
+         ON CONFLICT (staff_id, permission_key) DO NOTHING`,
+        [staff.id, permission]
+      );
+    }
   }
 
   await db.query(`
@@ -192,6 +356,7 @@ function createToken(account) {
 async function auth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
+
     const token = header.startsWith("Bearer ")
       ? header.slice(7)
       : "";
@@ -209,17 +374,21 @@ async function auth(req, res, next) {
     if (payload.type === "super" && payload.id === 1) {
       const result = await db.query(
         `SELECT id, username, version, must_change
-         FROM admin_account WHERE id = 1`
+         FROM admin_account
+         WHERE id = 1`
       );
 
       account = result.rows[0];
 
-      if (account) account.role = "SUPER_ADMIN";
+      if (account) {
+        account.role = "SUPER_ADMIN";
+      }
 
     } else if (payload.type === "staff") {
       const result = await db.query(
         `SELECT id, username, role, active, version, must_change
-         FROM admin_staff WHERE id = $1`,
+         FROM admin_staff
+         WHERE id = $1`,
         [payload.id]
       );
 
@@ -234,16 +403,21 @@ async function auth(req, res, next) {
 
     if (
       !account ||
-      account.version !== payload.version
+      Number(account.version) !== Number(payload.version)
     ) {
       return res.status(401).json({
         error: "انتهت الجلسة، سجّل الدخول مجددًا"
       });
     }
 
+    const permissions = payload.type === "super"
+      ? Object.keys(PERMISSION_CATALOG)
+      : await getStaffPermissions(account.id);
+
     req.admin = {
       ...account,
-      type: payload.type
+      type: payload.type,
+      permissions
     };
 
     if (
@@ -258,25 +432,16 @@ async function auth(req, res, next) {
 
     next();
 
-  } catch {
+  } catch (error) {
+    if (error.name !== "JsonWebTokenError" &&
+        error.name !== "TokenExpiredError") {
+      console.error("Authentication error:", error.message);
+    }
+
     return res.status(401).json({
       error: "الجلسة غير صالحة، سجّل الدخول مجددًا"
     });
   }
-}
-
-// ========================================
-// ROLE PERMISSIONS
-// ========================================
-
-function requireSuperAdmin(req, res, next) {
-  if (req.admin?.role !== "SUPER_ADMIN") {
-    return res.status(403).json({
-      error: "هذه الصلاحية خاصة بالسوبر أدمن"
-    });
-  }
-
-  next();
 }
 
 // ========================================
@@ -339,6 +504,7 @@ app.post("/api/login", loginLimiter, async (req, res) => {
         token: createToken(account),
         username: account.username,
         role: "SUPER_ADMIN",
+        permissions: Object.keys(PERMISSION_CATALOG),
         mustChangePassword: account.must_change
       });
     }
@@ -361,6 +527,8 @@ app.post("/api/login", loginLimiter, async (req, res) => {
         type: "staff"
       };
 
+      const permissions = await getStaffPermissions(staff.id);
+
       await log(
         `تسجيل دخول ${staff.role}`,
         "ناجح"
@@ -370,6 +538,7 @@ app.post("/api/login", loginLimiter, async (req, res) => {
         token: createToken(account),
         username: staff.username,
         role: staff.role,
+        permissions,
         mustChangePassword: staff.must_change
       });
     }
@@ -398,9 +567,32 @@ app.get("/api/me", auth, async (req, res) => {
     id: req.admin.id,
     username: req.admin.username,
     role: req.admin.role,
+    permissions: req.admin.permissions,
     mustChangePassword: req.admin.must_change
   });
 });
+
+// ========================================
+// PERMISSION CATALOG
+// SUPER ADMIN ONLY
+// ========================================
+
+app.get(
+  "/api/permissions/catalog",
+  auth,
+  requireSuperAdmin,
+  (req, res) => {
+    res.json({
+      permissions: Object.entries(PERMISSION_CATALOG).map(
+        ([key, value]) => ({
+          key,
+          label: value.label,
+          group: value.group
+        })
+      )
+    });
+  }
+);
 
 // ========================================
 // STAFF MANAGEMENT
@@ -421,9 +613,14 @@ app.get(
         ORDER BY created_at DESC
       `);
 
-      res.json({
-        admins: result.rows
-      });
+      const admins = await Promise.all(
+        result.rows.map(async admin => ({
+          ...admin,
+          permissions: await getStaffPermissions(admin.id)
+        }))
+      );
+
+      res.json({ admins });
 
     } catch (error) {
       console.error("Admins list error:", error.message);
@@ -442,30 +639,42 @@ app.post(
   requireSuperAdmin,
   actionLimiter,
   async (req, res) => {
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
+    const role = String(req.body.role || "").toUpperCase();
+
+    if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) {
+      return res.status(400).json({
+        error: "اسم المستخدم يجب أن يكون 3 إلى 32 حرفًا أو رقمًا"
+      });
+    }
+
+    if (password.length < 12) {
+      return res.status(400).json({
+        error: "كلمة المرور يجب أن تكون 12 حرفًا على الأقل"
+      });
+    }
+
+    if (!["ADMIN", "MODERATOR"].includes(role)) {
+      return res.status(400).json({
+        error: "الرتبة غير مسموحة"
+      });
+    }
+
+    const permissions = req.body.permissions === undefined
+      ? DEFAULT_STAFF_PERMISSIONS
+      : req.body.permissions;
+
+    if (!validatePermissions(permissions)) {
+      return res.status(400).json({
+        error: "قائمة الصلاحيات غير صحيحة"
+      });
+    }
+
+    const client = await db.connect();
+
     try {
-      const username = String(req.body.username || "").trim();
-      const password = String(req.body.password || "");
-      const role = String(req.body.role || "").toUpperCase();
-
-      if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) {
-        return res.status(400).json({
-          error: "اسم المستخدم يجب أن يكون 3 إلى 32 حرفًا أو رقمًا"
-        });
-      }
-
-      if (password.length < 12) {
-        return res.status(400).json({
-          error: "كلمة المرور يجب أن تكون 12 حرفًا على الأقل"
-        });
-      }
-
-      if (!["ADMIN", "MODERATOR"].includes(role)) {
-        return res.status(400).json({
-          error: "الرتبة غير مسموحة"
-        });
-      }
-
-      const superUser = await db.query(
+      const superUser = await client.query(
         "SELECT id FROM admin_account WHERE username = $1",
         [username]
       );
@@ -478,13 +687,23 @@ app.post(
 
       const passwordHash = await bcrypt.hash(password, 12);
 
-      const result = await db.query(
+      await client.query("BEGIN");
+
+      const result = await client.query(
         `INSERT INTO admin_staff
          (username, password_hash, role, active, must_change)
          VALUES ($1, $2, $3, true, true)
          RETURNING id, username, role, active, created_at`,
         [username, passwordHash, role]
       );
+
+      await saveStaffPermissions(
+        client,
+        result.rows[0].id,
+        permissions
+      );
+
+      await client.query("COMMIT");
 
       await log(
         "إنشاء حساب إداري",
@@ -493,10 +712,17 @@ app.post(
 
       res.status(201).json({
         message: "تم إنشاء الحساب",
-        admin: result.rows[0]
+        admin: {
+          ...result.rows[0],
+          permissions
+        }
       });
 
     } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
+
       if (error.code === "23505") {
         return res.status(409).json({
           error: "اسم المستخدم مستخدم بالفعل"
@@ -508,88 +734,141 @@ app.post(
       res.status(500).json({
         error: "تعذر إنشاء الحساب"
       });
+
+    } finally {
+      client.release();
     }
   }
 );
 
-// Change role or activate/deactivate
+// Change role, status or permissions
 app.patch(
   "/api/admins/:id",
   auth,
   requireSuperAdmin,
   actionLimiter,
   async (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        error: "رقم الحساب غير صحيح"
+      });
+    }
+
+    const role = req.body.role === undefined
+      ? undefined
+      : String(req.body.role).toUpperCase();
+
+    const active = req.body.active;
+
+    const hasPermissions =
+      Object.prototype.hasOwnProperty.call(
+        req.body,
+        "permissions"
+      );
+
+    if (
+      role !== undefined &&
+      !["ADMIN", "MODERATOR"].includes(role)
+    ) {
+      return res.status(400).json({
+        error: "لا يمكن تعيين هذه الرتبة"
+      });
+    }
+
+    if (
+      active !== undefined &&
+      typeof active !== "boolean"
+    ) {
+      return res.status(400).json({
+        error: "حالة الحساب غير صحيحة"
+      });
+    }
+
+    if (
+      hasPermissions &&
+      !validatePermissions(req.body.permissions)
+    ) {
+      return res.status(400).json({
+        error: "قائمة الصلاحيات غير صحيحة"
+      });
+    }
+
+    if (
+      role === undefined &&
+      active === undefined &&
+      !hasPermissions
+    ) {
+      return res.status(400).json({
+        error: "لم يتم إرسال أي تعديل"
+      });
+    }
+
+    const client = await db.connect();
+
     try {
-      const id = Number(req.params.id);
+      await client.query("BEGIN");
 
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({
-          error: "رقم الحساب غير صحيح"
-        });
-      }
-
-      const role = req.body.role === undefined
-        ? undefined
-        : String(req.body.role).toUpperCase();
-
-      const active = req.body.active;
-
-      if (
-        role !== undefined &&
-        !["ADMIN", "MODERATOR"].includes(role)
-      ) {
-        return res.status(400).json({
-          error: "لا يمكن تعيين هذه الرتبة"
-        });
-      }
-
-      if (
-        active !== undefined &&
-        typeof active !== "boolean"
-      ) {
-        return res.status(400).json({
-          error: "حالة الحساب غير صحيحة"
-        });
-      }
-
-      if (role === undefined && active === undefined) {
-        return res.status(400).json({
-          error: "لم يتم إرسال أي تعديل"
-        });
-      }
-
-      const result = await db.query(
+      const result = await client.query(
         `UPDATE admin_staff
          SET role = COALESCE($1, role),
              active = COALESCE($2, active),
              version = version + 1
          WHERE id = $3
-         RETURNING id, username, role, active, created_at`,
+         RETURNING id, username, role, active,
+                   must_change, created_at`,
         [role ?? null, active ?? null, id]
       );
 
       if (!result.rowCount) {
+        await client.query("ROLLBACK");
+
         return res.status(404).json({
           error: "الحساب غير موجود"
         });
       }
 
+      if (hasPermissions) {
+        await saveStaffPermissions(
+          client,
+          id,
+          req.body.permissions
+        );
+      }
+
+      const permissions = hasPermissions
+        ? req.body.permissions
+        : await getStaffPermissions(id);
+
+      await client.query("COMMIT");
+
       await log(
-        "تعديل حساب إداري",
+        "تعديل حساب وصلاحيات إدارية",
         `${result.rows[0].username}`
       );
 
       res.json({
-        message: "تم تحديث الحساب وإبطال جلساته",
-        admin: result.rows[0]
+        message: "تم تحديث الحساب والصلاحيات وإبطال الجلسات",
+        admin: {
+          ...result.rows[0],
+          permissions
+        }
       });
 
     } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
+
       console.error("Update admin error:", error.message);
 
       res.status(500).json({
         error: "تعذر تحديث الحساب"
       });
+
+    } finally {
+      client.release();
     }
   }
 );
@@ -698,7 +977,6 @@ app.post(
         });
       }
 
-      // Prevent duplicate usernames
       const duplicateSuper = await db.query(
         `SELECT id FROM admin_account
          WHERE username = $1 AND id <> $2`,
@@ -820,108 +1098,114 @@ app.post("/api/track", trackLimiter, async (req, res) => {
 // OVERVIEW
 // ========================================
 
-app.get("/api/overview", auth, async (req, res) => {
-  try {
-    const tracker = await db.query(`
-      SELECT to_regclass('public.tracker_visits') AS table_name
-    `);
+app.get(
+  "/api/overview",
+  auth,
+  requirePermission("overview.view"),
+  requirePermission("visitors.view"),
+  async (req, res) => {
+    try {
+      const tracker = await db.query(`
+        SELECT to_regclass('public.tracker_visits') AS table_name
+      `);
 
-    let today;
-    let month;
-    let active;
-    let visits;
+      let today;
+      let month;
+      let active;
+      let visits;
 
-    if (tracker.rows[0].table_name) {
-      [today, month, active, visits] = await Promise.all([
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM tracker_visits
-          WHERE visited_at >= date_trunc('day', now())
-        `),
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM tracker_visits
-          WHERE visited_at >= now() - interval '30 days'
-        `),
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM tracker_visits
-          WHERE visited_at >= now() - interval '5 minutes'
-        `),
-        db.query(`
-          SELECT id, visited_at AS created_at,
-                 page_path, referrer,
-                 'غير متاح' AS device,
-                 'غير متاح' AS browser,
-                 COALESCE(NULLIF(referrer, ''), 'مباشر') AS source
-          FROM tracker_visits
-          ORDER BY visited_at DESC
-          LIMIT 30
-        `)
-      ]);
+      if (tracker.rows[0].table_name) {
+        [today, month, active, visits] = await Promise.all([
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM tracker_visits
+            WHERE visited_at >= date_trunc('day', now())
+          `),
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM tracker_visits
+            WHERE visited_at >= now() - interval '30 days'
+          `),
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM tracker_visits
+            WHERE visited_at >= now() - interval '5 minutes'
+          `),
+          db.query(`
+            SELECT id, visited_at AS created_at,
+                   page_path, referrer,
+                   'غير متاح' AS device,
+                   'غير متاح' AS browser,
+                   COALESCE(NULLIF(referrer, ''), 'مباشر') AS source
+            FROM tracker_visits
+            ORDER BY visited_at DESC
+            LIMIT 30
+          `)
+        ]);
 
-    } else {
-      [today, month, active, visits] = await Promise.all([
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM page_views
-          WHERE created_at >= date_trunc('day', now())
-        `),
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM page_views
-          WHERE created_at >= now() - interval '30 days'
-        `),
-        db.query(`
-          SELECT count(*)::int AS n
-          FROM page_views
-          WHERE created_at >= now() - interval '5 minutes'
-        `),
-        db.query(`
-          SELECT id, created_at,
-                 NULL::text AS page_path,
-                 source AS referrer,
-                 device, browser, source
-          FROM page_views
-          ORDER BY created_at DESC
-          LIMIT 30
-        `)
-      ]);
+      } else {
+        [today, month, active, visits] = await Promise.all([
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM page_views
+            WHERE created_at >= date_trunc('day', now())
+          `),
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM page_views
+            WHERE created_at >= now() - interval '30 days'
+          `),
+          db.query(`
+            SELECT count(*)::int AS n
+            FROM page_views
+            WHERE created_at >= now() - interval '5 minutes'
+          `),
+          db.query(`
+            SELECT id, created_at,
+                   NULL::text AS page_path,
+                   source AS referrer,
+                   device, browser, source
+            FROM page_views
+            ORDER BY created_at DESC
+            LIMIT 30
+          `)
+        ]);
+      }
+
+      const setting = await db.query(`
+        SELECT value
+        FROM admin_settings
+        WHERE key = 'maintenance'
+      `);
+
+      res.json({
+        today: today.rows[0].n,
+        month: month.rows[0].n,
+        active: active.rows[0].n,
+        visits: visits.rows,
+        tracking: month.rows[0].n > 0,
+        maintenance: setting.rows[0]?.value === "true",
+        serverTime: new Date().toISOString()
+      });
+
+    } catch (error) {
+      console.error("Overview error:", error.message);
+
+      res.status(500).json({
+        error: "تعذر تحميل الإحصائيات"
+      });
     }
-
-    const setting = await db.query(`
-      SELECT value FROM admin_settings
-      WHERE key = 'maintenance'
-    `);
-
-    res.json({
-      today: today.rows[0].n,
-      month: month.rows[0].n,
-      active: active.rows[0].n,
-      visits: visits.rows,
-      tracking: month.rows[0].n > 0,
-      maintenance: setting.rows[0]?.value === "true",
-      serverTime: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error("Overview error:", error.message);
-
-    res.status(500).json({
-      error: "تعذر تحميل الإحصائيات"
-    });
   }
-});
+);
 
 // ========================================
 // MAINTENANCE
-// SUPER ADMIN ONLY
 // ========================================
 
 app.post(
   "/api/maintenance",
   auth,
-  requireSuperAdmin,
+  requirePermission("maintenance.manage"),
   actionLimiter,
   async (req, res) => {
     try {
@@ -959,26 +1243,31 @@ app.post(
 // LOGS
 // ========================================
 
-app.get("/api/logs", auth, async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT * FROM admin_logs
-       ORDER BY created_at DESC
-       LIMIT 100`
-    );
+app.get(
+  "/api/logs",
+  auth,
+  requirePermission("logs.view"),
+  async (req, res) => {
+    try {
+      const result = await db.query(
+        `SELECT * FROM admin_logs
+         ORDER BY created_at DESC
+         LIMIT 100`
+      );
 
-    res.json({
-      logs: result.rows
-    });
+      res.json({
+        logs: result.rows
+      });
 
-  } catch (error) {
-    console.error("Logs error:", error.message);
+    } catch (error) {
+      console.error("Logs error:", error.message);
 
-    res.status(500).json({
-      error: "تعذر تحميل السجلات"
-    });
+      res.status(500).json({
+        error: "تعذر تحميل السجلات"
+      });
+    }
   }
-});
+);
 
 // ========================================
 // RENDER CONTROL
@@ -988,7 +1277,7 @@ app.get("/api/logs", auth, async (req, res) => {
 app.post(
   "/api/site/:action",
   auth,
-  requireSuperAdmin,
+  requirePermission("render.manage"),
   actionLimiter,
   async (req, res) => {
     const action = req.params.action;
