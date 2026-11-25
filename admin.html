@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -5,28 +6,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BASAM Control Center</title>
 <style>
-:root {
- --bg:#090e17;--panel:#111b2a;--line:#25364b;
- --text:#edf4ff;--muted:#91a4bc;--blue:#438de0;
- --green:#27c997;--red:#e95770;--yellow:#e9bd62;
-}
+:root{--bg:#090e17;--panel:#111b2a;--line:#25364b;--text:#edf4ff;--muted:#91a4bc;--blue:#438de0;--green:#27c997;--red:#e95770;--yellow:#e9bd62}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 button,input,select{font:inherit}
 button{border:1px solid var(--line);background:#20344d;color:white;padding:11px 16px;border-radius:10px;cursor:pointer}
 button:hover{filter:brightness(1.2)}
 button:disabled{opacity:.5;cursor:not-allowed}
-.primary{background:#245eaa}
-.danger{background:#672637}
-.success{background:#14513f}
+.primary{background:#245eaa}.danger{background:#672637}.success{background:#14513f}
 input,select{width:100%;padding:12px;background:#0b1420;border:1px solid var(--line);border-radius:9px;color:white}
 select option{background:#111b2a}
 .hidden{display:none!important}
 .login{min-height:100vh;display:grid;place-items:center;padding:20px}
 .login-card{width:min(420px,100%);padding:30px;background:var(--panel);border:1px solid var(--line);border-radius:20px}
 .logo{font-size:25px;font-weight:900;color:#75b7ff}
-h1{font-size:22px}
-label{display:block;margin:15px 0 7px}
+h1{font-size:22px}label{display:block;margin:15px 0 7px}
 .muted{color:var(--muted);font-size:13px}
 .layout{display:grid;grid-template-columns:220px 1fr;gap:18px}
 .wrap{max-width:1400px;margin:auto;padding:22px}
@@ -37,44 +31,38 @@ label{display:block;margin:15px 0 7px}
 .nav button.active{background:#1d3c60}
 .content{min-width:0}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-.stat{padding:17px}
-.stat small{color:var(--muted)}
+.stat{padding:17px}.stat small{color:var(--muted)}
 .stat strong{display:block;font-size:27px;margin-top:9px}
-.panel{padding:18px;margin:15px 0}
-.panel h2{font-size:17px;margin-top:0}
-.section{display:none}
-.section.active{display:block}
+.panel{padding:18px;margin:15px 0}.panel h2{font-size:17px;margin-top:0}
+.section{display:none}.section.active{display:block}
 .row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.field{margin:14px 0}
-.actions{display:flex;gap:8px;flex-wrap:wrap}
+.field{margin:14px 0}.actions{display:flex;gap:8px;flex-wrap:wrap}
 .notice{padding:13px;background:#1b2e43;border-radius:10px;margin:12px 0;color:#b9d9fa}
-.bad{background:#40202a;color:#ffb4c0}
-.good{background:#153a30;color:#8be4c4}
+.bad{background:#40202a;color:#ffb4c0}.good{background:#153a30;color:#8be4c4}
 .table-wrap{overflow:auto}
-table{width:100%;border-collapse:collapse;min-width:550px}
+table{width:100%;border-collapse:collapse;min-width:650px}
 td,th{text-align:right;padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
 td button{padding:8px 11px}
 td select{min-width:125px}
 .role{display:inline-block;padding:5px 9px;border-radius:7px;background:#1d3c60;font-size:12px}
-.active-state{color:var(--green)}
-.disabled-state{color:var(--red)}
+.active-state{color:var(--green)}.disabled-state{color:var(--red)}
 hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .form-grid .field{margin:0}
 .account-actions{display:flex;gap:7px;flex-wrap:wrap}
-@media(max-width:850px){
- .layout{grid-template-columns:1fr}
- .grid{grid-template-columns:repeat(2,1fr)}
-}
-@media(max-width:480px){
- .wrap{padding:12px}
- .grid{gap:8px}
- .stat{padding:12px}
- .form-grid{grid-template-columns:1fr}
-}
+.permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}
+.permission-item{display:flex;align-items:center;gap:9px;background:#0b1420;border:1px solid var(--line);border-radius:9px;padding:10px;margin:0}
+.permission-item input{width:18px;height:18px;accent-color:#438de0}
+.permission-box{background:#0d1725;border:1px solid var(--line);padding:13px;border-radius:12px;margin:12px 0}
+.permission-box h3{font-size:14px;margin:0 0 8px}
+.permission-list{display:flex;flex-wrap:wrap;gap:6px}
+.permission-tag{font-size:11px;padding:5px 8px;background:#1d3c60;border-radius:7px;color:#c8e2ff}
+@media(max-width:850px){.layout{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.wrap{padding:12px}.grid{gap:8px}.stat{padding:12px}.form-grid,.permission-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
+
 <section id="login" class="login">
  <div class="login-card">
   <div class="logo">BASAM CONTROL</div>
@@ -88,6 +76,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <p id="loginError" class="muted"></p>
  </div>
 </section>
+
 <div id="dashboard" class="wrap hidden">
  <header class="row">
   <div>
@@ -100,22 +89,24 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
    <button onclick="logout()">تسجيل الخروج</button>
   </div>
  </header>
+
  <div class="layout">
   <aside class="sidebar">
    <div class="logo">BASAM</div>
    <p class="muted">ADMINISTRATION</p>
    <nav class="nav">
-    <button data-tab="overview" class="active" onclick="tab('overview',this)">نظرة عامة</button>
+    <button data-tab="overview" onclick="tab('overview',this)">نظرة عامة</button>
     <button data-tab="visitors" onclick="tab('visitors',this)">الزوار والإحصائيات</button>
     <button data-tab="system" onclick="tab('system',this)">حالة النظام</button>
-    <button data-tab="control" class="super-only" onclick="tab('control',this)">التحكم بالموقع</button>
+    <button data-tab="control" onclick="tab('control',this)">التحكم بالموقع</button>
     <button data-tab="staff" class="super-only" onclick="tab('staff',this)">إدارة الموظفين</button>
     <button data-tab="security" onclick="tab('security',this)">الأمان وكلمة المرور</button>
     <button data-tab="logs" onclick="tab('logs',this)">سجل العمليات</button>
    </nav>
   </aside>
+
   <main class="content">
-   <section id="overview" class="section active">
+   <section id="overview" class="section">
     <div class="grid">
      <div class="stat"><small>زيارات اليوم</small><strong id="today">—</strong></div>
      <div class="stat"><small>زيارات آخر 30 يومًا</small><strong id="month">—</strong></div>
@@ -127,6 +118,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      <div id="status" class="notice">جارٍ الاتصال بالخادم...</div>
     </div>
    </section>
+
    <section id="visitors" class="section">
     <div class="panel">
      <h2>أحدث الزيارات</h2>
@@ -138,14 +130,16 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      </div>
     </div>
    </section>
+
    <section id="system" class="section">
     <div class="panel">
      <h2>معلومات النظام</h2>
      <p id="systemInfo" class="muted">جارٍ التحميل...</p>
     </div>
    </section>
-   <section id="control" class="section super-only">
-    <div class="panel">
+
+   <section id="control" class="section">
+    <div class="panel" id="renderControlPanel">
      <h2>التحكم بموقع المراجعة</h2>
      <div class="notice bad">تنبيه: إيقاف الموقع يمنع الزوار من الوصول إليه.</div>
      <div class="row">
@@ -159,7 +153,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      </div>
      <p class="muted">التحكم في Render معطّل افتراضيًا في نسخة الاختبار.</p>
     </div>
-    <div class="panel">
+    <div class="panel" id="maintenancePanel">
      <h2>وضع الصيانة</h2>
      <p class="muted">تفعيل علامة الصيانة في الخادم.</p>
      <div class="row">
@@ -168,15 +162,17 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      </div>
     </div>
    </section>
-   <section id="staff" class="section super-only">
+
+   <section id="staff" class="section">
     <div class="panel">
      <div class="row">
-      <h2>إدارة الموظفين</h2>
+      <h2>إدارة الموظفين والصلاحيات</h2>
       <button onclick="loadStaff()">تحديث القائمة</button>
      </div>
-     <p class="muted">يمكن للسوبر أدمن إنشاء حسابات الموظفين وتعديل رتبهم وإيقافها أو حذفها.</p>
-     <div class="notice">الحسابات الجديدة تبدأ بطلب تغيير كلمة المرور عند أول تسجيل دخول.</div>
+     <p class="muted">أنشئ حسابات الموظفين وحدد صلاحيات كل حساب بشكل مستقل.</p>
+     <div class="notice">السوبر أدمن وحده يستطيع إدارة الموظفين وتعديل صلاحياتهم.</div>
     </div>
+
     <div class="panel">
      <h2>إنشاء حساب موظف</h2>
      <div class="form-grid">
@@ -200,23 +196,24 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
        <input id="staffPasswordConfirm" type="password" autocomplete="new-password">
       </div>
      </div>
-     <div class="actions" style="margin-top:16px">
+
+     <div class="permission-box">
+      <h3>صلاحيات الحساب الجديد</h3>
+      <p class="muted">حدد الصلاحيات التي سيحصل عليها الموظف عند إنشائه.</p>
+      <div id="createPermissions" class="permission-grid"></div>
+     </div>
+     <div class="actions">
       <button class="primary" onclick="createStaff()">إنشاء الحساب</button>
      </div>
      <p id="staffCreateMessage" class="muted"></p>
     </div>
+
     <div class="panel">
      <h2>حسابات الموظفين</h2>
      <div class="table-wrap">
       <table>
        <thead>
-        <tr>
-         <th>اسم المستخدم</th>
-         <th>الرتبة</th>
-         <th>الحالة</th>
-         <th>تاريخ الإنشاء</th>
-         <th>الإجراءات</th>
-        </tr>
+        <tr><th>اسم المستخدم</th><th>الرتبة</th><th>الحالة</th><th>تاريخ الإنشاء</th><th>الإجراءات</th></tr>
        </thead>
        <tbody id="staffList">
         <tr><td colspan="5">جارٍ تحميل الحسابات...</td></tr>
@@ -226,6 +223,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      <p id="staffListMessage" class="muted"></p>
     </div>
    </section>
+
    <section id="security" class="section">
     <div class="panel">
      <h2>تغيير بيانات الدخول</h2>
@@ -241,6 +239,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
      <button class="primary" onclick="changeCredentials()">حفظ التغييرات</button>
     </div>
    </section>
+
    <section id="logs" class="section">
     <div class="panel">
      <h2>سجل العمليات</h2>
@@ -255,24 +254,39 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   </main>
  </div>
 </div>
+
 <script>
 "use strict";
+
 const API = "https://basam-admin-api.onrender.com";
 let token = sessionStorage.getItem("basam_token") || "";
 let currentUser = null;
+
+/* يجب أن تطابق هذه المفاتيح كتالوج الصلاحيات الموجود في Server.js */
+const PERMISSIONS = [
+ {key:"overview.view",label:"عرض النظرة العامة"},
+ {key:"visitors.view",label:"عرض الزوار والإحصائيات"},
+ {key:"system.view",label:"عرض حالة النظام"},
+ {key:"security.view",label:"عرض قسم الأمان"},
+ {key:"logs.view",label:"عرض سجل العمليات"},
+ {key:"maintenance.manage",label:"إدارة وضع الصيانة"},
+ {key:"render.manage",label:"التحكم بالموقع عبر Render"},
+ {key:"staff.manage",label:"صلاحية إدارة الموظفين"}
+];
+
 async function request(path, options = {}) {
  const headers = {
-  "Content-Type": "application/json",
+  "Content-Type":"application/json",
   ...(token ? {Authorization:"Bearer " + token} : {}),
   ...(options.headers || {})
  };
  let response;
  try {
-  response = await fetch(API + path, {...options, headers});
+  response = await fetch(API + path,{...options,headers});
  } catch {
   throw Error("تعذر الاتصال بالخادم. تحقق من اتصال الإنترنت ورابط API.");
  }
- const data = await response.json().catch(() => ({}));
+ const data = await response.json().catch(()=>({}));
  if (!response.ok) {
   const error = Error(data.error || data.message || "حدث خطأ في الطلب");
   error.status = response.status;
@@ -281,126 +295,167 @@ async function request(path, options = {}) {
  }
  return data;
 }
-function showDashboard() {
- document.getElementById("login").classList.add("hidden");
- document.getElementById("dashboard").classList.remove("hidden");
-}
-function logout() {
- token = "";
- currentUser = null;
- sessionStorage.removeItem("basam_token");
- location.reload();
-}
+
 function safe(value) {
- return String(value ?? "").replace(/[&<>"']/g, c => ({
-  "&":"&amp;",
-  "<":"&lt;",
-  ">":"&gt;",
-  '"':"&quot;",
-  "'":"&#39;"
+ return String(value ?? "").replace(/[&<>"']/g,c=>({
+  "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
  }[c]));
 }
+
 function formatDate(value) {
  if (!value) return "—";
  const date = new Date(value);
  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("ar");
 }
-function setRoleVisibility() {
- const isSuper = currentUser?.role === "SUPER_ADMIN";
- document.querySelectorAll(".super-only").forEach(element => {
-  element.classList.toggle("hidden", !isSuper);
- });
- document.getElementById("accountInfo").textContent =
-  currentUser
-   ? "الحساب: " + currentUser.username + " | الرتبة: " + (currentUser.role || "قيد التحقق")
-   : "";
+
+function isSuper() {
+ return currentUser?.role === "SUPER_ADMIN";
 }
-function setPasswordChangeRequired(required) {
- document.getElementById("passwordNotice").classList.toggle("hidden", !required);
- document.querySelectorAll(".nav button").forEach(button => {
-  if (button.dataset.tab !== "security") {
-   button.classList.toggle("hidden", required);
-  }
+
+function hasPermission(permission) {
+ if (isSuper()) return true;
+ return Array.isArray(currentUser?.permissions) &&
+  currentUser.permissions.includes(permission);
+}
+
+function canOpenTab(id) {
+ const rules = {
+  overview:()=>hasPermission("overview.view") && hasPermission("visitors.view"),
+  visitors:()=>hasPermission("overview.view") && hasPermission("visitors.view"),
+  system:()=>hasPermission("system.view"),
+  control:()=>hasPermission("render.manage") || hasPermission("maintenance.manage"),
+  staff:()=>isSuper(),
+  security:()=>hasPermission("security.view") || isSuper(),
+  logs:()=>hasPermission("logs.view")
+ };
+ return !!rules[id]?.();
+}
+
+function setRoleVisibility() {
+ document.querySelectorAll(".super-only").forEach(element=>{
+  element.classList.toggle("hidden",!isSuper());
  });
- if (required) {
+
+ document.querySelectorAll(".nav button[data-tab]").forEach(button=>{
+  const id = button.dataset.tab;
+  button.classList.toggle("hidden",!canOpenTab(id));
+ });
+
+ document.getElementById("renderControlPanel")
+  .classList.toggle("hidden",!hasPermission("render.manage"));
+ document.getElementById("maintenancePanel")
+  .classList.toggle("hidden",!hasPermission("maintenance.manage"));
+
+ document.getElementById("accountInfo").textContent = currentUser
+  ? "الحساب: "+currentUser.username+" | الرتبة: "+(currentUser.role || "قيد التحقق")
+  : "";
+}
+
+function showDashboard() {
+ document.getElementById("login").classList.add("hidden");
+ document.getElementById("dashboard").classList.remove("hidden");
+}
+
+function logout() {
+ token="";
+ currentUser=null;
+ sessionStorage.removeItem("basam_token");
+ location.reload();
+}
+
+function setPasswordChangeRequired(required) {
+ document.getElementById("passwordNotice").classList.toggle("hidden",!required);
+ document.querySelectorAll(".nav button").forEach(button=>{
+  if(button.dataset.tab!=="security") button.classList.toggle("hidden",required);
+ });
+ if(required) {
   document.getElementById("newUsername").value =
    currentUser?.username || document.getElementById("username").value.trim();
-  const securityButton = document.querySelector('[data-tab="security"]');
-  tab("security", securityButton);
+  const securityButton=document.querySelector('[data-tab="security"]');
+  tab("security",securityButton);
  }
 }
-function tab(id, button) {
- if (!currentUser) return;
- if (currentUser.mustChangePassword && id !== "security") {
+
+function tab(id,button) {
+ if(!currentUser) return;
+ if(currentUser.mustChangePassword && id!=="security") {
   alert("يجب تغيير كلمة المرور أولاً.");
   return;
  }
- const section = document.getElementById(id);
- if (!section || section.classList.contains("hidden")) return;
- document.querySelectorAll(".section").forEach(x => x.classList.remove("active"));
- document.querySelectorAll(".nav button").forEach(x => x.classList.remove("active"));
+ if(!canOpenTab(id) && id!=="security") {
+  alert("ليس لديك صلاحية الوصول إلى هذا القسم.");
+  return;
+ }
+ if(id==="security" && !currentUser.mustChangePassword && !canOpenTab(id)) {
+  alert("ليس لديك صلاحية الوصول إلى هذا القسم.");
+  return;
+ }
+ const section=document.getElementById(id);
+ if(!section || section.classList.contains("hidden")) return;
+
+ document.querySelectorAll(".section").forEach(x=>x.classList.remove("active"));
+ document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));
  section.classList.add("active");
- if (button) button.classList.add("active");
- if (id === "staff") loadStaff();
+ if(button) button.classList.add("active");
+
+ if(id==="staff") loadStaff();
+ if(id==="overview" || id==="visitors") refresh();
+ if(id==="logs") loadLogs();
 }
-// ========================================
-// LOGIN
-// ========================================
+
 async function login() {
- const errorBox = document.getElementById("loginError");
- errorBox.textContent = "جارٍ تسجيل الدخول...";
+ const errorBox=document.getElementById("loginError");
+ errorBox.textContent="جارٍ تسجيل الدخول...";
  try {
-  const data = await request("/api/login", {
+  const data=await request("/api/login",{
    method:"POST",
    body:JSON.stringify({
     username:document.getElementById("username").value.trim(),
     password:document.getElementById("password").value
    })
   });
-  if (!data.token) {
-   throw Error("لم يستلم الموقع رمز الجلسة من الخادم");
-  }
-  token = data.token;
-  sessionStorage.setItem("basam_token", token);
+  if(!data.token) throw Error("لم يستلم الموقع رمز الجلسة من الخادم");
+  token=data.token;
+  sessionStorage.setItem("basam_token",token);
   await initializeDashboard(data);
- } catch (error) {
-  errorBox.textContent = error.message;
+ } catch(error) {
+  errorBox.textContent=error.message;
  }
 }
-// ========================================
-// INITIALIZE DASHBOARD
-// ========================================
-async function initializeDashboard(loginData = {}) {
+
+async function initializeDashboard(loginData={}) {
  try {
-  const me = await request("/api/me");
-  currentUser = {
+  const me=await request("/api/me");
+  currentUser={
    id:me.id,
    username:me.username,
    role:me.role,
-   mustChangePassword:me.mustChangePassword === true
+   permissions:Array.isArray(me.permissions)?me.permissions:[],
+   mustChangePassword:me.mustChangePassword===true
   };
   showDashboard();
   setRoleVisibility();
+  renderCreatePermissions();
   setPasswordChangeRequired(currentUser.mustChangePassword);
-  if (!currentUser.mustChangePassword) {
+
+  if(!currentUser.mustChangePassword) {
+   const firstTab=["overview","visitors","system","control","security","logs","staff"]
+    .find(canOpenTab);
+   if(firstTab) tab(firstTab,document.querySelector(`[data-tab="${firstTab}"]`));
    await refresh();
   }
- } catch (error) {
-  if (error.status === 401) {
+ } catch(error) {
+  if(error.status===401) {
    logout();
    return;
   }
-  // الحساب الجديد: السماح بفتح شاشة تغيير كلمة المرور
-  if (
-   error.mustChangePassword ||
-   loginData.mustChangePassword === true ||
-   loginData.must_change === true
-  ) {
-   const user = loginData.user || loginData.admin || loginData;
-   currentUser = {
+  if(error.mustChangePassword || loginData.mustChangePassword===true || loginData.must_change===true) {
+   const user=loginData.user || loginData.admin || loginData;
+   currentUser={
     id:user.id || null,
     username:user.username || document.getElementById("username").value.trim(),
     role:user.role || null,
+    permissions:[],
     mustChangePassword:true
    };
    showDashboard();
@@ -411,277 +466,354 @@ async function initializeDashboard(loginData = {}) {
   alert(error.message);
  }
 }
-// ========================================
-// REFRESH
-// ========================================
+
 async function refresh() {
- if (!currentUser) return;
- if (currentUser.mustChangePassword) {
-  setPasswordChangeRequired(true);
-  return;
- }
+ if(!currentUser || currentUser.mustChangePassword) return;
  try {
-  const d = await request("/api/overview");
-  document.getElementById("today").textContent = d.today ?? "—";
-  document.getElementById("month").textContent = d.month ?? "—";
-  document.getElementById("active").textContent = d.active ?? "—";
-  document.getElementById("tracking").textContent = d.tracking ? "يعمل" : "غير مربوط";
-  document.getElementById("status").textContent =
-   "الخادم متصل — الصيانة: " + (d.maintenance ? "مفعلة" : "متوقفة");
-  document.getElementById("maintenanceState").textContent =
-   d.maintenance ? "مفعلة" : "غير مفعلة";
-  document.getElementById("systemInfo").textContent =
-   "وقت الخادم: " + formatDate(d.serverTime);
-  document.getElementById("visits").innerHTML = (d.visits || []).map(v =>
-   `<tr>
-    <td>${formatDate(v.created_at)}</td>
-    <td>${safe(v.device)}</td>
-    <td>${safe(v.browser)}</td>
-    <td>${safe(v.source)}</td>
-   </tr>`
-  ).join("");
-  const logs = await request("/api/logs");
-  document.getElementById("logs").innerHTML = (logs.logs || []).map(x =>
-   `<tr>
-    <td>${formatDate(x.created_at)}</td>
-    <td>${safe(x.action)}</td>
-    <td>${safe(x.result)}</td>
-   </tr>`
-  ).join("");
- } catch (error) {
+  if(hasPermission("overview.view") && hasPermission("visitors.view")) {
+   const d=await request("/api/overview");
+   document.getElementById("today").textContent=d.today ?? "—";
+   document.getElementById("month").textContent=d.month ?? "—";
+   document.getElementById("active").textContent=d.active ?? "—";
+   document.getElementById("tracking").textContent=d.tracking?"يعمل":"غير مربوط";
+   document.getElementById("status").textContent=
+    "الخادم متصل — الصيانة: "+(d.maintenance?"مفعلة":"متوقفة");
+   document.getElementById("maintenanceState").textContent=
+    d.maintenance?"مفعلة":"غير مفعلة";
+   document.getElementById("systemInfo").textContent=
+    "وقت الخادم: "+formatDate(d.serverTime);
+   document.getElementById("visits").innerHTML=(d.visits || []).map(v=>`
+    <tr>
+     <td>${formatDate(v.created_at)}</td>
+     <td>${safe(v.device)}</td>
+     <td>${safe(v.browser)}</td>
+     <td>${safe(v.source)}</td>
+    </tr>`).join("");
+  }
+ } catch(error) {
   handleError(error);
  }
 }
+
+async function loadLogs() {
+ if(!hasPermission("logs.view")) return;
+ try {
+  const data=await request("/api/logs");
+  document.getElementById("logs").innerHTML=(data.logs || []).map(x=>`
+   <tr>
+    <td>${formatDate(x.created_at)}</td>
+    <td>${safe(x.action)}</td>
+    <td>${safe(x.result)}</td>
+   </tr>`).join("");
+ } catch(error) {
+  handleError(error);
+ }
+}
+
 function handleError(error) {
- if (error.status === 401) {
+ if(error.status===401) {
   logout();
   return;
  }
- if (error.mustChangePassword) {
-  currentUser.mustChangePassword = true;
+ if(error.mustChangePassword) {
+  currentUser.mustChangePassword=true;
   setPasswordChangeRequired(true);
   return;
  }
  alert(error.message);
 }
-// ========================================
-// STAFF MANAGEMENT - SUPER ADMIN ONLY
-// ========================================
+
+/* إنشاء واجهة اختيار الصلاحيات */
+function permissionCheckboxes(containerId,selected=[],prefix="perm") {
+ const container=document.getElementById(containerId);
+ if(!container) return;
+ const chosen=new Set(Array.isArray(selected)?selected:[]);
+ container.innerHTML=PERMISSIONS.map(p=>`
+  <label class="permission-item">
+   <input type="checkbox" data-permission="${safe(p.key)}"
+    id="${prefix}-${safe(p.key)}" ${chosen.has(p.key)?"checked":""}>
+   <span>${safe(p.label)}</span>
+  </label>`).join("");
+}
+
+function readPermissions(containerId) {
+ const container=document.getElementById(containerId);
+ if(!container) return [];
+ return [...container.querySelectorAll('input[data-permission]:checked')]
+  .map(input=>input.dataset.permission);
+}
+
+function renderCreatePermissions() {
+ permissionCheckboxes("createPermissions",[],"create");
+}
+
+/* إدارة الموظفين */
 async function loadStaff() {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const tbody = document.getElementById("staffList");
- const message = document.getElementById("staffListMessage");
- tbody.innerHTML = '<tr><td colspan="5">جارٍ تحميل الحسابات...</td></tr>';
- message.textContent = "";
+ if(!isSuper()) return;
+ const tbody=document.getElementById("staffList");
+ const message=document.getElementById("staffListMessage");
+ tbody.innerHTML='<tr><td colspan="5">جارٍ تحميل الحسابات...</td></tr>';
+ message.textContent="";
+
  try {
-  const data = await request("/api/admins");
-  const admins = data.admins || [];
-  if (!admins.length) {
-   tbody.innerHTML = '<tr><td colspan="5">لا توجد حسابات موظفين حتى الآن.</td></tr>';
+  const data=await request("/api/admins");
+  const admins=data.admins || [];
+  if(!admins.length) {
+   tbody.innerHTML='<tr><td colspan="5">لا توجد حسابات موظفين حتى الآن.</td></tr>';
    return;
   }
-  tbody.innerHTML = admins.map(admin => {
-   const id = Number(admin.id);
-   const username = safe(admin.username);
-   const role = safe(admin.role);
-   const active = admin.active === true;
+
+  tbody.innerHTML=admins.map(admin=>{
+   const id=Number(admin.id);
+   const active=admin.active===true;
+   const selected=Array.isArray(admin.permissions)?admin.permissions:[];
+   const permissionSummary=selected.length
+    ? selected.map(key=>{
+       const item=PERMISSIONS.find(p=>p.key===key);
+       return item?`<span class="permission-tag">${safe(item.label)}</span>`:"";
+      }).join("")
+    : '<span class="muted">لا توجد صلاحيات محددة</span>';
+
    return `
     <tr>
-     <td>${username}</td>
+     <td>${safe(admin.username)}</td>
      <td>
-      <span class="role">${role}</span>
+      <span class="role">${safe(admin.role)}</span>
       <select id="role-${id}">
-       <option value="ADMIN" ${admin.role === "ADMIN" ? "selected" : ""}>ADMIN</option>
-       <option value="MODERATOR" ${admin.role === "MODERATOR" ? "selected" : ""}>MODERATOR</option>
+       <option value="ADMIN" ${admin.role==="ADMIN"?"selected":""}>ADMIN</option>
+       <option value="MODERATOR" ${admin.role==="MODERATOR"?"selected":""}>MODERATOR</option>
       </select>
      </td>
-     <td class="${active ? "active-state" : "disabled-state"}">
-      ${active ? "مفعل" : "معطل"}
-     </td>
+     <td class="${active?"active-state":"disabled-state"}">${active?"مفعل":"معطل"}</td>
      <td>${formatDate(admin.created_at)}</td>
      <td>
       <div class="account-actions">
        <button class="primary" onclick="changeStaffRole(${id})">حفظ الرتبة</button>
-       <button class="${active ? "danger" : "success"}" onclick="toggleStaff(${id},${!active})">
-        ${active ? "تعطيل" : "تفعيل"}
-       </button>
+       <button class="${active?"danger":"success"}" onclick="toggleStaff(${id},${!active})">${active?"تعطيل":"تفعيل"}</button>
        <button class="danger" onclick="deleteStaff(${id},'${encodeURIComponent(admin.username)}')">حذف</button>
       </div>
      </td>
     </tr>
-   `;
+    <tr>
+     <td colspan="5">
+      <div class="permission-box">
+       <div class="row">
+        <h3>صلاحيات ${safe(admin.username)}</h3>
+        <button class="primary" onclick="saveStaffPermissions(${id})">حفظ الصلاحيات</button>
+       </div>
+       <div class="permission-list">${permissionSummary}</div>
+       <div class="permission-grid" id="staff-permissions-${id}"></div>
+      </div>
+     </td>
+    </tr>`;
   }).join("");
- } catch (error) {
-  tbody.innerHTML = '<tr><td colspan="5">تعذر تحميل الحسابات.</td></tr>';
+
+  admins.forEach(admin=>{
+   permissionCheckboxes(
+    "staff-permissions-"+Number(admin.id),
+    admin.permissions || [],
+    "staff-"+Number(admin.id)
+   );
+  });
+
+ } catch(error) {
+  tbody.innerHTML='<tr><td colspan="5">تعذر تحميل الحسابات.</td></tr>';
   handleError(error);
  }
 }
+
 async function createStaff() {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const username = document.getElementById("staffUsername").value.trim();
- const role = document.getElementById("staffRole").value;
- const password = document.getElementById("staffPassword").value;
- const confirmPassword = document.getElementById("staffPasswordConfirm").value;
- const message = document.getElementById("staffCreateMessage");
- message.textContent = "";
- if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) {
-  message.textContent = "اسم المستخدم يجب أن يكون 3 إلى 32 حرفًا أو رقمًا.";
+ if(!isSuper()) return;
+
+ const username=document.getElementById("staffUsername").value.trim();
+ const role=document.getElementById("staffRole").value;
+ const password=document.getElementById("staffPassword").value;
+ const confirmPassword=document.getElementById("staffPasswordConfirm").value;
+ const permissions=readPermissions("createPermissions");
+ const message=document.getElementById("staffCreateMessage");
+
+ message.textContent="";
+ message.className="muted";
+
+ if(!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) {
+  message.textContent="اسم المستخدم يجب أن يكون 3 إلى 32 حرفًا أو رقمًا.";
   return;
  }
- if (password.length < 12) {
-  message.textContent = "كلمة المرور يجب أن تكون 12 خانة على الأقل.";
+ if(password.length<12) {
+  message.textContent="كلمة المرور يجب أن تكون 12 خانة على الأقل.";
   return;
  }
- if (password !== confirmPassword) {
-  message.textContent = "كلمتا المرور غير متطابقتين.";
+ if(password!==confirmPassword) {
+  message.textContent="كلمتا المرور غير متطابقتين.";
   return;
  }
+
  try {
-  const data = await request("/api/admins", {
+  const data=await request("/api/admins",{
    method:"POST",
-   body:JSON.stringify({username, password, role})
+   body:JSON.stringify({username,password,role,permissions})
   });
-  message.textContent = data.message || "تم إنشاء الحساب بنجاح.";
-  message.className = "notice good";
-  document.getElementById("staffUsername").value = "";
-  document.getElementById("staffPassword").value = "";
-  document.getElementById("staffPasswordConfirm").value = "";
+  message.textContent=data.message || "تم إنشاء الحساب بنجاح.";
+  message.className="notice good";
+  document.getElementById("staffUsername").value="";
+  document.getElementById("staffPassword").value="";
+  document.getElementById("staffPasswordConfirm").value="";
+  renderCreatePermissions();
   await loadStaff();
- } catch (error) {
-  message.textContent = error.message;
-  message.className = "notice bad";
-  if (error.status === 401) handleError(error);
+ } catch(error) {
+  message.textContent=error.message;
+  message.className="notice bad";
+  if(error.status===401) handleError(error);
  }
 }
-async function changeStaffRole(id) {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const select = document.getElementById("role-" + id);
- if (!select) return;
+
+async function saveStaffPermissions(id) {
+ if(!isSuper()) return;
+ const permissions=readPermissions("staff-permissions-"+id);
+ if(!confirm("هل تريد حفظ الصلاحيات المحددة لهذا الموظف؟")) return;
+
  try {
-  const data = await request("/api/admins/" + id, {
+  const data=await request("/api/admins/"+id,{
+   method:"PATCH",
+   body:JSON.stringify({permissions})
+  });
+  alert(data.message || "تم تحديث صلاحيات الموظف.");
+  await loadStaff();
+ } catch(error) {
+  handleError(error);
+ }
+}
+
+async function changeStaffRole(id) {
+ if(!isSuper()) return;
+ const select=document.getElementById("role-"+id);
+ if(!select) return;
+ try {
+  const data=await request("/api/admins/"+id,{
    method:"PATCH",
    body:JSON.stringify({role:select.value})
   });
   alert(data.message || "تم تحديث الرتبة.");
   await loadStaff();
- } catch (error) {
+ } catch(error) {
   handleError(error);
  }
 }
-async function toggleStaff(id, active) {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const message = active
-  ? "هل تريد تفعيل هذا الحساب؟"
-  : "هل تريد تعطيل هذا الحساب؟";
- if (!confirm(message)) return;
+
+async function toggleStaff(id,active) {
+ if(!isSuper()) return;
+ if(!confirm(active?"هل تريد تفعيل هذا الحساب؟":"هل تريد تعطيل هذا الحساب؟")) return;
  try {
-  const data = await request("/api/admins/" + id, {
+  const data=await request("/api/admins/"+id,{
    method:"PATCH",
    body:JSON.stringify({active})
   });
   alert(data.message || "تم تحديث حالة الحساب.");
   await loadStaff();
- } catch (error) {
+ } catch(error) {
   handleError(error);
  }
 }
-async function deleteStaff(id, encodedUsername) {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const username = decodeURIComponent(encodedUsername);
- if (!confirm("هل أنت متأكد من حذف حساب " + username + "؟ لا يمكن التراجع عن هذه العملية.")) {
+
+async function deleteStaff(id,encodedUsername) {
+ if(!isSuper()) return;
+ const username=decodeURIComponent(encodedUsername);
+ if(!confirm("هل أنت متأكد من حذف حساب "+username+"؟ لا يمكن التراجع عن هذه العملية.")) return;
+ try {
+  const data=await request("/api/admins/"+id,{method:"DELETE"});
+  alert(data.message || "تم حذف الحساب.");
+  await loadStaff();
+ } catch(error) {
+  handleError(error);
+ }
+}
+
+/* التحكم بالموقع */
+async function siteAction(action) {
+ if(!hasPermission("render.manage")) {
+  alert("ليس لديك صلاحية التحكم بالموقع.");
+  return;
+ }
+ const msg=action==="suspend"
+  ?"هل تريد إيقاف موقع المراجعة بالكامل؟"
+  :"هل تريد تشغيل موقع المراجعة؟";
+ if(!confirm(msg)) return;
+ try {
+  const data=await request("/api/site/"+action,{method:"POST"});
+  alert(data.message || "تم إرسال الطلب.");
+  await refresh();
+ } catch(error) {
+  handleError(error);
+ }
+}
+
+async function maintenance() {
+ if(!hasPermission("maintenance.manage")) {
+  alert("ليس لديك صلاحية إدارة وضع الصيانة.");
   return;
  }
  try {
-  const data = await request("/api/admins/" + id, {
-   method:"DELETE"
-  });
-  alert(data.message || "تم حذف الحساب.");
-  await loadStaff();
- } catch (error) {
-  handleError(error);
- }
-}
-// ========================================
-// SITE CONTROL
-// ========================================
-async function siteAction(action) {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- const msg = action === "suspend"
-  ? "هل تريد إيقاف موقع المراجعة بالكامل؟"
-  : "هل تريد تشغيل موقع المراجعة؟";
- if (!confirm(msg)) return;
- try {
-  const d = await request("/api/site/" + action, {method:"POST"});
-  alert(d.message || "تم إرسال الطلب");
-  await refresh();
- } catch (error) {
-  handleError(error);
- }
-}
-async function maintenance() {
- if (currentUser?.role !== "SUPER_ADMIN") return;
- try {
-  const current = document.getElementById("maintenanceState").textContent === "مفعلة";
-  const d = await request("/api/maintenance", {
+  const current=document.getElementById("maintenanceState").textContent==="مفعلة";
+  const data=await request("/api/maintenance",{
    method:"POST",
    body:JSON.stringify({enabled:!current})
   });
-  alert(d.message || "تم إرسال الطلب");
+  alert(data.message || "تم إرسال الطلب.");
   await refresh();
- } catch (error) {
+ } catch(error) {
   handleError(error);
  }
 }
-// ========================================
-// CHANGE CREDENTIALS
-// ========================================
+
+/* تغيير بيانات الدخول */
 async function changeCredentials() {
- const username = document.getElementById("newUsername").value.trim();
- const oldPassword = document.getElementById("oldPassword").value;
- const newPassword = document.getElementById("newPassword").value;
- const confirmPassword = document.getElementById("confirmPassword").value;
- if (!username) {
+ const username=document.getElementById("newUsername").value.trim();
+ const oldPassword=document.getElementById("oldPassword").value;
+ const newPassword=document.getElementById("newPassword").value;
+ const confirmPassword=document.getElementById("confirmPassword").value;
+
+ if(!username) {
   alert("أدخل اسم المستخدم الجديد");
   return;
  }
- if (newPassword.length < 12 || newPassword !== confirmPassword) {
+ if(newPassword.length<12 || newPassword!==confirmPassword) {
   alert("تأكد من تطابق كلمة المرور وأن طولها 12 خانة على الأقل");
   return;
  }
+
  try {
-  const d = await request("/api/credentials", {
+  const data=await request("/api/credentials",{
    method:"POST",
-   body:JSON.stringify({username, oldPassword, newPassword})
+   body:JSON.stringify({username,oldPassword,newPassword})
   });
-  if (d.token) {
-   token = d.token;
-   sessionStorage.setItem("basam_token", token);
+  if(data.token) {
+   token=data.token;
+   sessionStorage.setItem("basam_token",token);
   }
-  // استرجاع بيانات الحساب والرتبة بعد التغيير
-  const me = await request("/api/me");
-  currentUser = {
+
+  const me=await request("/api/me");
+  currentUser={
    id:me.id,
    username:me.username,
    role:me.role,
-   mustChangePassword:me.mustChangePassword === true
+   permissions:Array.isArray(me.permissions)?me.permissions:[],
+   mustChangePassword:me.mustChangePassword===true
   };
+
   setRoleVisibility();
   setPasswordChangeRequired(false);
-  document.getElementById("oldPassword").value = "";
-  document.getElementById("newPassword").value = "";
-  document.getElementById("confirmPassword").value = "";
-  alert(d.message || "تم تحديث بيانات الدخول بنجاح.");
+  document.getElementById("oldPassword").value="";
+  document.getElementById("newPassword").value="";
+  document.getElementById("confirmPassword").value="";
+  alert(data.message || "تم تحديث بيانات الدخول بنجاح.");
   await refresh();
- } catch (error) {
+ } catch(error) {
   handleError(error);
  }
 }
-// ========================================
-// STARTUP
-// ========================================
-if (token) {
- initializeDashboard();
-}
+
+/* بدء التشغيل */
+if(token) initializeDashboard();
 </script>
 </body>
 </html>
