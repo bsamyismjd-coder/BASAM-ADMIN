@@ -22,6 +22,7 @@ const ALLOW_RENDER_CONTROL = process.env.ALLOW_RENDER_CONTROL === "true";
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error("JWT_SECRET must be at least 32 characters.");
 }
+
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL is required.");
 }
@@ -36,19 +37,26 @@ const db = new Pool({
 
 const allowedOrigins = (process.env.ADMIN_ORIGIN || "")
   .split(",")
-  .map(x => x.trim())
+  .map(value => value.trim())
   .filter(Boolean);
 
 app.use(helmet({ contentSecurityPolicy: false }));
+
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    if (
+      !origin ||
+      allowedOrigins.length === 0 ||
+      allowedOrigins.includes(origin)
+    ) {
       return callback(null, true);
     }
+
     callback(new Error("Origin not allowed"));
   },
   credentials: true
 }));
+
 app.use(express.json({ limit: "1mb" }));
 
 const loginLimiter = rateLimit({
@@ -113,23 +121,33 @@ const SAFE_SETTINGS = [
 const asyncHandler = fn => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
-const isSuperAdmin = admin =>
-  admin &&
-  admin.type === "super" &&
-  admin.role === "SUPER_ADMIN" &&
-  Number(admin.id) === 1;
+function isSuperAdmin(admin) {
+  return Boolean(
+    admin &&
+    admin.type === "super" &&
+    admin.role === "SUPER_ADMIN" &&
+    Number(admin.id) === 1
+  );
+}
 
 function maskIp(ip) {
   if (!ip) return null;
+
   ip = String(ip).replace(/^::ffff:/, "");
+
   if (ip.includes(".")) {
-    const p = ip.split(".");
-    if (p.length === 4) {
-      p[3] = "xxx";
-      return p.join(".");
+    const parts = ip.split(".");
+
+    if (parts.length === 4) {
+      parts[3] = "xxx";
+      return parts.join(".");
     }
   }
-  if (ip.includes(":")) return ip.split(":").slice(0, 3).join(":") + ":…";
+
+  if (ip.includes(":")) {
+    return ip.split(":").slice(0, 3).join(":") + ":…";
+  }
+
   return null;
 }
 
@@ -138,38 +156,60 @@ async function securityEvent(req, type, username, result) {
     await db.query(
       `INSERT INTO admin_security_events
        (event_type, username, result, masked_ip, user_agent)
-       VALUES ($1,$2,$3,$4,$5)`,
+       VALUES ($1, $2, $3, $4, $5)`,
       [
-        type,
+        String(type || "").slice(0, 60),
         String(username || "").slice(0, 100),
         String(result || "").slice(0, 40),
         maskIp(req.ip),
         String(req.headers["user-agent"] || "").slice(0, 300)
       ]
     );
-  } catch (e) {
-    console.error("Security event error:", e.message);
+  } catch (error) {
+    console.error("Security event error:", error.message);
   }
 }
 
+/*
+  IMPORTANT:
+  جدول الصلاحيات الحالي يستخدم:
+  staff_id
+  permission_key
+  granted
+  updated_at
+
+  لا تستخدم عمود permission.
+*/
+
 async function getStaffPermissions(staffId, client = db) {
   const result = await client.query(
-    "SELECT permission FROM admin_staff_permissions WHERE staff_id=$1",
+    `SELECT permission_key
+     FROM admin_staff_permissions
+     WHERE staff_id = $1
+       AND granted = TRUE
+     ORDER BY permission_key`,
     [staffId]
   );
-  return result.rows.map(r => r.permission);
+
+  return result.rows.map(row => row.permission_key);
 }
 
 async function saveStaffPermissions(client, staffId, permissions) {
   await client.query(
-    "DELETE FROM admin_staff_permissions WHERE staff_id=$1",
+    `DELETE FROM admin_staff_permissions
+     WHERE staff_id = $1`,
     [staffId]
   );
 
   for (const permission of permissions) {
     await client.query(
-      `INSERT INTO admin_staff_permissions (staff_id, permission)
-       VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      `INSERT INTO admin_staff_permissions
+       (staff_id, permission_key, granted)
+       VALUES ($1, $2, TRUE)
+       ON CONFLICT (staff_id, permission_key)
+       DO UPDATE SET
+         granted = TRUE,
+         updated_at = NOW()`,
       [staffId, permission]
     );
   }
@@ -185,7 +225,10 @@ function validatePermissions(input) {
   for (const permission of permissions) {
     if (
       typeof permission !== "string" ||
-      !Object.prototype.hasOwnProperty.call(PERMISSION_CATALOG, permission)
+      !Object.prototype.hasOwnProperty.call(
+        PERMISSION_CATALOG,
+        permission
+      )
     ) {
       throw new Error("Invalid permission: " + permission);
     }
@@ -194,44 +237,66 @@ function validatePermissions(input) {
   return permissions;
 }
 
+function issueToken(admin) {
+  return jwt.sign(
+    {
+      id: admin.id,
+      type: admin.type,
+      version: Number(admin.version)
+    },
+    JWT_SECRET,
+    { expiresIn: "8h" }
+  );
+}
+
 async function auth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    const token = header.startsWith("Bearer ")
+      ? header.slice(7)
+      : "";
 
     if (!token) {
-      return res.status(401).json({ error: "Authentication required" });
+      return res.status(401).json({
+        error: "Authentication required"
+      });
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    let result;
-
-    if (decoded.type === "super") {
-      result = await db.query(
-        `SELECT id, username, role, active, version, must_change
-         FROM admin_account WHERE id=$1`,
-        [decoded.id]
-      );
-    } else {
-      result = await db.query(
-        `SELECT id, username, role, active, version, must_change
-         FROM admin_staff WHERE id=$1`,
-        [decoded.id]
-      );
+    if (!["super", "staff"].includes(decoded.type)) {
+      return res.status(401).json({
+        error: "Invalid session type"
+      });
     }
 
+    const table = decoded.type === "super"
+      ? "admin_account"
+      : "admin_staff";
+
+    const result = await db.query(
+      `SELECT id, username, role, active, version, must_change
+       FROM ${table}
+       WHERE id = $1`,
+      [decoded.id]
+    );
+
     if (!result.rows.length) {
-      return res.status(401).json({ error: "Account not found" });
+      return res.status(401).json({
+        error: "Account not found"
+      });
     }
 
     const row = result.rows[0];
 
-    if (!row.active || Number(row.version) !== Number(decoded.version)) {
-      return res.status(401).json({ error: "Session expired" });
+    if (
+      !row.active ||
+      Number(row.version) !== Number(decoded.version)
+    ) {
+      return res.status(401).json({
+        error: "Session expired"
+      });
     }
-
-    let permissions = [];
 
     const admin = {
       id: Number(row.id),
@@ -244,15 +309,17 @@ async function auth(req, res, next) {
     };
 
     if (isSuperAdmin(admin)) {
-      permissions = Object.keys(PERMISSION_CATALOG);
+      admin.permissions = Object.keys(PERMISSION_CATALOG);
     } else if (decoded.type === "staff") {
-      permissions = await getStaffPermissions(row.id);
+      admin.permissions = await getStaffPermissions(row.id);
     }
 
-    admin.permissions = permissions;
     req.admin = admin;
 
-    if (admin.must_change && req.path !== "/api/credentials") {
+    if (
+      admin.must_change &&
+      req.path !== "/api/credentials"
+    ) {
       return res.status(403).json({
         error: "Password change required",
         code: "MUST_CHANGE_PASSWORD"
@@ -260,24 +327,35 @@ async function auth(req, res, next) {
     }
 
     next();
-  } catch (e) {
-    if (e.name === "TokenExpiredError" || e.name === "JsonWebTokenError") {
-      return res.status(401).json({ error: "Invalid or expired session" });
+  } catch (error) {
+    if (
+      error.name === "TokenExpiredError" ||
+      error.name === "JsonWebTokenError"
+    ) {
+      return res.status(401).json({
+        error: "Invalid or expired session"
+      });
     }
-    next(e);
+
+    next(error);
   }
 }
 
 function requireSuperAdmin(req, res, next) {
   if (!isSuperAdmin(req.admin)) {
-    return res.status(403).json({ error: "Super admin only" });
+    return res.status(403).json({
+      error: "Super admin only"
+    });
   }
+
   next();
 }
 
 function requirePermission(permission) {
   return (req, res, next) => {
-    if (isSuperAdmin(req.admin)) return next();
+    if (isSuperAdmin(req.admin)) {
+      return next();
+    }
 
     if (!req.admin.permissions.includes(permission)) {
       return res.status(403).json({
@@ -290,27 +368,23 @@ function requirePermission(permission) {
   };
 }
 
-function issueToken(admin) {
-  return jwt.sign({
-    id: admin.id,
-    type: admin.type,
-    version: Number(admin.version)
-  }, JWT_SECRET, { expiresIn: "8h" });
-}
-
 async function setting(key, fallback = null) {
   const result = await db.query(
-    "SELECT value FROM admin_settings WHERE key=$1",
+    "SELECT value FROM admin_settings WHERE key = $1",
     [key]
   );
-  return result.rows.length ? result.rows[0].value : fallback;
+
+  return result.rows.length
+    ? result.rows[0].value
+    : fallback;
 }
 
 async function saveSetting(key, value) {
   await db.query(
-    `INSERT INTO admin_settings (key,value)
-     VALUES ($1,$2)
-     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+    `INSERT INTO admin_settings (key, value)
+     VALUES ($1, $2)
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value`,
     [key, String(value)]
   );
 }
@@ -318,8 +392,9 @@ async function saveSetting(key, value) {
 async function writeLog(req, action, details = "") {
   try {
     await db.query(
-      `INSERT INTO admin_logs (admin_id, username, action, details, created_at)
-       VALUES ($1,$2,$3,$4,NOW())`,
+      `INSERT INTO admin_logs
+       (admin_id, username, action, details, created_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
       [
         req.admin?.id || null,
         req.admin?.username || "system",
@@ -327,10 +402,14 @@ async function writeLog(req, action, details = "") {
         String(details).slice(0, 1000)
       ]
     );
-  } catch (e) {
-    console.error("Log error:", e.message);
+  } catch (error) {
+    console.error("Log error:", error.message);
   }
 }
+
+// ======================================================
+// DATABASE INITIALIZATION
+// ======================================================
 
 async function init() {
   await db.query(`
@@ -379,10 +458,11 @@ async function init() {
     );
 
     CREATE TABLE IF NOT EXISTS admin_staff_permissions (
-      id SERIAL PRIMARY KEY,
-      staff_id INTEGER NOT NULL REFERENCES admin_staff(id) ON DELETE CASCADE,
-      permission VARCHAR(100) NOT NULL,
-      UNIQUE(staff_id, permission)
+      staff_id BIGINT REFERENCES admin_staff(id) ON DELETE CASCADE,
+      permission_key TEXT NOT NULL,
+      granted BOOLEAN DEFAULT TRUE,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (staff_id, permission_key)
     );
 
     CREATE TABLE IF NOT EXISTS admin_security_events (
@@ -452,27 +532,41 @@ async function init() {
       ON support_tickets(created_at);
   `);
 
-  const count = await db.query("SELECT COUNT(*)::int AS n FROM admin_account");
+  const count = await db.query(
+    "SELECT COUNT(*)::int AS n FROM admin_account"
+  );
 
-  if (count.rows[0].n === 0 && ADMIN_USER && ADMIN_PASS) {
+  if (
+    count.rows[0].n === 0 &&
+    ADMIN_USER &&
+    ADMIN_PASS
+  ) {
     const hash = await bcrypt.hash(ADMIN_PASS, 12);
 
     await db.query(
       `INSERT INTO admin_account
        (id, username, password_hash, role, active, version, must_change)
-       VALUES (1,$1,$2,'SUPER_ADMIN',TRUE,1,TRUE)
+       VALUES (1, $1, $2, 'SUPER_ADMIN', TRUE, 1, TRUE)
        ON CONFLICT DO NOTHING`,
       [ADMIN_USER, hash]
     );
   }
 
-  const staff = await db.query("SELECT id FROM admin_staff");
+  // إضافة الصلاحيات الافتراضية للموظفين الحاليين فقط.
+  // ON CONFLICT DO NOTHING يحافظ على صلاحياتهم الحالية.
+
+  const staff = await db.query(
+    "SELECT id FROM admin_staff"
+  );
 
   for (const item of staff.rows) {
     for (const permission of DEFAULT_STAFF_PERMISSIONS) {
       await db.query(
-        `INSERT INTO admin_staff_permissions (staff_id,permission)
-         VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        `INSERT INTO admin_staff_permissions
+         (staff_id, permission_key, granted)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (staff_id, permission_key)
+         DO NOTHING`,
         [item.id, permission]
       );
     }
@@ -481,11 +575,15 @@ async function init() {
   console.log("BASAM database initialized.");
 }
 
+// ======================================================
 // HEALTH
+// ======================================================
 
 app.get("/health", asyncHandler(async (req, res) => {
   const start = Date.now();
+
   await db.query("SELECT 1");
+
   res.json({
     status: "ok",
     database: "connected",
@@ -494,70 +592,103 @@ app.get("/health", asyncHandler(async (req, res) => {
   });
 }));
 
+// ======================================================
 // LOGIN
+// ======================================================
 
-app.post("/api/login", loginLimiter, asyncHandler(async (req, res) => {
-  const username = String(req.body.username || "").trim();
-  const password = String(req.body.password || "");
+app.post(
+  "/api/login",
+  loginLimiter,
+  asyncHandler(async (req, res) => {
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
 
-  if (!username || !password) {
-    await securityEvent(req, "login", username, "missing_credentials");
-    return res.status(400).json({ error: "Username and password required" });
-  }
+    if (!username || !password) {
+      await securityEvent(
+        req,
+        "login",
+        username,
+        "missing_credentials"
+      );
 
-  let result = await db.query(
-    "SELECT id,username,password_hash,role,active,version,must_change FROM admin_account WHERE username=$1",
-    [username]
-  );
+      return res.status(400).json({
+        error: "Username and password required"
+      });
+    }
 
-  let type = "super";
-
-  if (!result.rows.length) {
-    result = await db.query(
-      "SELECT id,username,password_hash,role,active,version,must_change FROM admin_staff WHERE username=$1",
+    let result = await db.query(
+      `SELECT id, username, password_hash, role,
+              active, version, must_change
+       FROM admin_account
+       WHERE username = $1`,
       [username]
     );
-    type = "staff";
-  }
 
-  if (!result.rows.length) {
-    await securityEvent(req, "login", username, "failed");
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
+    let type = "super";
 
-  const account = result.rows[0];
-  const valid = await bcrypt.compare(password, account.password_hash);
+    if (!result.rows.length) {
+      result = await db.query(
+        `SELECT id, username, password_hash, role,
+                active, version, must_change
+         FROM admin_staff
+         WHERE username = $1`,
+        [username]
+      );
 
-  if (!valid || !account.active) {
-    await securityEvent(req, "login", username, "failed");
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-
-  const admin = {
-    id: Number(account.id),
-    username: account.username,
-    role: account.role,
-    type,
-    version: account.version
-  };
-
-  const token = issueToken(admin);
-
-  await securityEvent(req, "login", username, "success");
-
-  res.json({
-    token,
-    must_change: account.must_change,
-    admin: {
-      id: admin.id,
-      username: admin.username,
-      role: admin.role,
-      type
+      type = "staff";
     }
-  });
-}));
 
+    if (!result.rows.length) {
+      await securityEvent(req, "login", username, "failed");
+
+      return res.status(401).json({
+        error: "Invalid credentials"
+      });
+    }
+
+    const account = result.rows[0];
+
+    const valid = await bcrypt.compare(
+      password,
+      account.password_hash
+    );
+
+    if (!valid || !account.active) {
+      await securityEvent(req, "login", username, "failed");
+
+      return res.status(401).json({
+        error: "Invalid credentials"
+      });
+    }
+
+    const admin = {
+      id: Number(account.id),
+      username: account.username,
+      role: account.role,
+      type,
+      version: account.version
+    };
+
+    const token = issueToken(admin);
+
+    await securityEvent(req, "login", username, "success");
+
+    res.json({
+      token,
+      must_change: account.must_change,
+      admin: {
+        id: admin.id,
+        username: admin.username,
+        role: admin.role,
+        type
+      }
+    });
+  })
+);
+
+// ======================================================
 // CURRENT ADMIN
+// ======================================================
 
 app.get("/api/me", auth, asyncHandler(async (req, res) => {
   res.json({
@@ -567,823 +698,1350 @@ app.get("/api/me", auth, asyncHandler(async (req, res) => {
   });
 }));
 
-app.get("/api/permissions/catalog", auth, requireSuperAdmin, (req, res) => {
-  res.json(PERMISSION_CATALOG);
-});
+app.get(
+  "/api/permissions/catalog",
+  auth,
+  requireSuperAdmin,
+  (req, res) => {
+    res.json(PERMISSION_CATALOG);
+  }
+);
 
+// ======================================================
 // CREDENTIALS
+// ======================================================
 
-app.post("/api/credentials", auth, actionLimiter, asyncHandler(async (req, res) => {
-  const username = String(req.body.username || req.admin.username).trim();
-  const password = String(req.body.password || "");
+app.post(
+  "/api/credentials",
+  auth,
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const username = String(
+      req.body.username || req.admin.username
+    ).trim();
 
-  if (username.length < 3 || password.length < 10) {
-    return res.status(400).json({
-      error: "Username must be at least 3 characters and password at least 10."
-    });
-  }
+    const password = String(req.body.password || "");
 
-  const duplicate = await db.query(
-    `SELECT username FROM admin_account WHERE username=$1 AND id<>$2
-     UNION ALL
-     SELECT username FROM admin_staff WHERE username=$1`,
-    [username, req.admin.type === "super" ? req.admin.id : -1]
-  );
+    if (username.length < 3 || password.length < 10) {
+      return res.status(400).json({
+        error: "Username must be at least 3 characters and password at least 10."
+      });
+    }
 
-  if (duplicate.rows.length) {
-    return res.status(409).json({ error: "Username already exists" });
-  }
+    const duplicate = await db.query(
+      `SELECT username
+       FROM admin_account
+       WHERE username = $1 AND id <> $2
+       UNION ALL
+       SELECT username
+       FROM admin_staff
+       WHERE username = $1`,
+      [
+        username,
+        req.admin.type === "super" ? req.admin.id : -1
+      ]
+    );
 
-  const hash = await bcrypt.hash(password, 12);
-  const table = req.admin.type === "super" ? "admin_account" : "admin_staff";
-
-  await db.query(
-    `UPDATE ${table}
-     SET username=$1,password_hash=$2,must_change=FALSE,version=version+1
-     WHERE id=$3`,
-    [username, hash, req.admin.id]
-  );
-
-  await writeLog(req, "credentials_updated");
-
-  const updated = await db.query(
-    `SELECT id,username,role,version FROM ${table} WHERE id=$1`,
-    [req.admin.id]
-  );
-
-  const account = {
-    ...updated.rows[0],
-    type: req.admin.type
-  };
-
-  res.json({
-    success: true,
-    token: issueToken(account),
-    message: "Credentials updated. Please sign in again."
-  });
-}));
-
-// STAFF MANAGEMENT
-
-app.get("/api/admins", auth, requireSuperAdmin, asyncHandler(async (req, res) => {
-  const result = await db.query(
-    `SELECT id,username,role,active,version,must_change,created_at
-     FROM admin_staff ORDER BY id DESC`
-  );
-
-  const admins = [];
-
-  for (const row of result.rows) {
-    admins.push({
-      ...row,
-      permissions: await getStaffPermissions(row.id)
-    });
-  }
-
-  res.json(admins);
-}));
-
-app.post("/api/admins", auth, requireSuperAdmin, actionLimiter, asyncHandler(async (req, res) => {
-  const username = String(req.body.username || "").trim();
-  const password = String(req.body.password || "");
-  const permissions = validatePermissions(req.body.permissions || []);
-
-  if (username.length < 3 || password.length < 10) {
-    return res.status(400).json({ error: "Invalid username or password" });
-  }
-
-  const exists = await db.query(
-    `SELECT username FROM admin_account WHERE username=$1
-     UNION ALL
-     SELECT username FROM admin_staff WHERE username=$1`,
-    [username]
-  );
-
-  if (exists.rows.length) {
-    return res.status(409).json({ error: "Username already exists" });
-  }
-
-  const client = await db.connect();
-
-  try {
-    await client.query("BEGIN");
+    if (duplicate.rows.length) {
+      return res.status(409).json({
+        error: "Username already exists"
+      });
+    }
 
     const hash = await bcrypt.hash(password, 12);
 
-    const created = await client.query(
-      `INSERT INTO admin_staff
-       (username,password_hash,role,active,version,must_change)
-       VALUES ($1,$2,'STAFF',TRUE,1,TRUE)
-       RETURNING id,username,role,active,created_at`,
-      [username, hash]
+    const table = req.admin.type === "super"
+      ? "admin_account"
+      : "admin_staff";
+
+    await db.query(
+      `UPDATE ${table}
+       SET username = $1,
+           password_hash = $2,
+           must_change = FALSE,
+           version = version + 1
+       WHERE id = $3`,
+      [username, hash, req.admin.id]
     );
 
-    await saveStaffPermissions(client, created.rows[0].id, permissions);
+    await writeLog(req, "credentials_updated");
 
-    await client.query("COMMIT");
+    const updated = await db.query(
+      `SELECT id, username, role, version
+       FROM ${table}
+       WHERE id = $1`,
+      [req.admin.id]
+    );
 
-    await writeLog(req, "staff_created", username);
+    const account = {
+      ...updated.rows[0],
+      type: req.admin.type
+    };
 
-    res.status(201).json({
-      ...created.rows[0],
-      permissions
+    res.json({
+      success: true,
+      token: issueToken(account),
+      message: "Credentials updated. Please sign in again."
     });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
-}));
+  })
+);
 
-app.patch("/api/admins/:id", auth, requireSuperAdmin, actionLimiter, asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
+// ======================================================
+// STAFF MANAGEMENT
+// ======================================================
 
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "Invalid staff ID" });
-  }
+app.get(
+  "/api/admins",
+  auth,
+  requireSuperAdmin,
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT id, username, role, active, version,
+              must_change, created_at
+       FROM admin_staff
+       ORDER BY id DESC`
+    );
 
-  const client = await db.connect();
+    const admins = [];
 
-  try {
-    await client.query("BEGIN");
+    for (const row of result.rows) {
+      admins.push({
+        ...row,
+        permissions: await getStaffPermissions(row.id)
+      });
+    }
 
-    const current = await client.query(
-      "SELECT id FROM admin_staff WHERE id=$1 FOR UPDATE",
+    res.json(admins);
+  })
+);
+
+app.post(
+  "/api/admins",
+  auth,
+  requireSuperAdmin,
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
+    const permissions = validatePermissions(
+      req.body.permissions || []
+    );
+
+    if (username.length < 3 || password.length < 10) {
+      return res.status(400).json({
+        error: "Invalid username or password"
+      });
+    }
+
+    const exists = await db.query(
+      `SELECT username FROM admin_account WHERE username = $1
+       UNION ALL
+       SELECT username FROM admin_staff WHERE username = $1`,
+      [username]
+    );
+
+    if (exists.rows.length) {
+      return res.status(409).json({
+        error: "Username already exists"
+      });
+    }
+
+    const client = await db.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const hash = await bcrypt.hash(password, 12);
+
+      const created = await client.query(
+        `INSERT INTO admin_staff
+         (username, password_hash, role, active, version, must_change)
+         VALUES ($1, $2, 'STAFF', TRUE, 1, TRUE)
+         RETURNING id, username, role, active, created_at`,
+        [username, hash]
+      );
+
+      await saveStaffPermissions(
+        client,
+        created.rows[0].id,
+        permissions
+      );
+
+      await client.query("COMMIT");
+
+      await writeLog(req, "staff_created", username);
+
+      res.status(201).json({
+        ...created.rows[0],
+        permissions
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  })
+);
+
+app.patch(
+  "/api/admins/:id",
+  auth,
+  requireSuperAdmin,
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        error: "Invalid staff ID"
+      });
+    }
+
+    const client = await db.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const current = await client.query(
+        `SELECT id FROM admin_staff
+         WHERE id = $1
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (!current.rows.length) {
+        await client.query("ROLLBACK");
+
+        return res.status(404).json({
+          error: "Staff member not found"
+        });
+      }
+
+      const fields = [];
+      const values = [];
+      let n = 1;
+
+      if (req.body.username !== undefined) {
+        const username = String(req.body.username).trim();
+
+        if (username.length < 3) {
+          throw new Error("Invalid username");
+        }
+
+        const duplicate = await client.query(
+          `SELECT id FROM admin_account WHERE username = $1
+           UNION ALL
+           SELECT id FROM admin_staff
+           WHERE username = $1 AND id <> $2`,
+          [username, id]
+        );
+
+        if (duplicate.rows.length) {
+          throw new Error("Username already exists");
+        }
+
+        fields.push(`username = $${n++}`);
+        values.push(username);
+      }
+
+      if (req.body.active !== undefined) {
+        fields.push(`active = $${n++}`);
+        values.push(Boolean(req.body.active));
+      }
+
+      if (req.body.password) {
+        const password = String(req.body.password);
+
+        if (password.length < 10) {
+          throw new Error("Password must be at least 10 characters");
+        }
+
+        fields.push(`password_hash = $${n++}`);
+        values.push(await bcrypt.hash(password, 12));
+
+        fields.push("must_change = TRUE");
+      }
+
+      if (fields.length) {
+        fields.push("version = version + 1");
+        values.push(id);
+
+        await client.query(
+          `UPDATE admin_staff
+           SET ${fields.join(", ")}
+           WHERE id = $${n}`,
+          values
+        );
+      }
+
+      if (req.body.permissions !== undefined) {
+        await saveStaffPermissions(
+          client,
+          id,
+          validatePermissions(req.body.permissions)
+        );
+      }
+
+      await client.query("COMMIT");
+
+      await writeLog(req, "staff_updated", String(id));
+
+      const result = await db.query(
+        `SELECT id, username, role, active, version,
+                must_change, created_at
+         FROM admin_staff
+         WHERE id = $1`,
+        [id]
+      );
+
+      res.json({
+        ...result.rows[0],
+        permissions: await getStaffPermissions(id)
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      if (
+        error.message.includes("already exists")
+      ) {
+        return res.status(409).json({
+          error: error.message
+        });
+      }
+
+      if (
+        error.message.includes("Invalid") ||
+        error.message.includes("must be")
+      ) {
+        return res.status(400).json({
+          error: error.message
+        });
+      }
+
+      throw error;
+    } finally {
+      client.release();
+    }
+  })
+);
+
+app.delete(
+  "/api/admins/:id",
+  auth,
+  requireSuperAdmin,
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        error: "Invalid ID"
+      });
+    }
+
+    const result = await db.query(
+      `DELETE FROM admin_staff
+       WHERE id = $1
+       RETURNING id, username`,
+      [id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        error: "Staff member not found"
+      });
+    }
+
+    await writeLog(
+      req,
+      "staff_deleted",
+      result.rows[0].username
+    );
+
+    res.json({ success: true });
+  })
+);
+
+// ======================================================
+// TRACKING
+// ======================================================
+
+app.post(
+  "/api/track",
+  publicLimiter,
+  asyncHandler(async (req, res) => {
+    const page = String(req.body.page || "/").slice(0, 300);
+
+    await db.query(
+      `INSERT INTO page_views
+       (page, ip, user_agent, created_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [
+        page,
+        maskIp(req.ip),
+        String(req.headers["user-agent"] || "").slice(0, 300)
+      ]
+    );
+
+    res.json({ success: true });
+  })
+);
+
+// ======================================================
+// OVERVIEW
+// ======================================================
+
+app.get(
+  "/api/overview",
+  auth,
+  requirePermission("overview.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE created_at >= CURRENT_DATE
+        )::int AS today,
+
+        COUNT(*) FILTER (
+          WHERE created_at >= NOW() - INTERVAL '30 days'
+        )::int AS last_30_days,
+
+        COUNT(*) FILTER (
+          WHERE created_at >= NOW() - INTERVAL '5 minutes'
+        )::int AS active_now
+
+      FROM page_views
+    `);
+
+    const maintenance = await setting(
+      "maintenance_enabled",
+      "false"
+    );
+
+    res.json({
+      visitors: result.rows[0],
+      maintenance: maintenance === "true",
+      generated_at: new Date().toISOString()
+    });
+  })
+);
+
+// ======================================================
+// VISITORS
+// ======================================================
+
+app.get(
+  "/api/visitors",
+  auth,
+  requirePermission("visitors.view"),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || 50, 1),
+      200
+    );
+
+    const result = await db.query(
+      `SELECT id, page, ip, user_agent, created_at
+       FROM page_views
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    res.json(result.rows);
+  })
+);
+
+// ======================================================
+// SYSTEM MONITORING
+// ======================================================
+
+app.get(
+  "/api/system",
+  auth,
+  requirePermission("system.view"),
+  asyncHandler(async (req, res) => {
+    const start = Date.now();
+
+    await db.query("SELECT 1");
+
+    const memory = process.memoryUsage();
+
+    res.json({
+      api: "online",
+      database: "connected",
+      database_latency_ms: Date.now() - start,
+      uptime_seconds: Math.floor(process.uptime()),
+      node_version: process.version,
+      platform: process.platform,
+      hostname: os.hostname(),
+
+      memory: {
+        rss: memory.rss,
+        heap_used: memory.heapUsed,
+        heap_total: memory.heapTotal
+      },
+
+      cpu_count: os.cpus().length,
+      load_average: os.loadavg(),
+      render_control_enabled: false
+    });
+  })
+);
+
+// ======================================================
+// MAINTENANCE
+// ======================================================
+
+app.get(
+  "/api/maintenance",
+  auth,
+  requirePermission("maintenance.manage"),
+  asyncHandler(async (req, res) => {
+    res.json({
+      enabled:
+        (await setting("maintenance_enabled", "false")) === "true",
+
+      message:
+        await setting("maintenance_message", "")
+    });
+  })
+);
+
+app.post(
+  "/api/maintenance",
+  auth,
+  requirePermission("maintenance.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const enabled = Boolean(req.body.enabled);
+    const message = String(req.body.message || "").slice(0, 500);
+
+    await saveSetting("maintenance_enabled", enabled);
+    await saveSetting("maintenance_message", message);
+
+    await writeLog(
+      req,
+      "maintenance_updated",
+      String(enabled)
+    );
+
+    res.json({
+      success: true,
+      enabled,
+      message
+    });
+  })
+);
+
+// ======================================================
+// REVIEW LOCK
+// ======================================================
+
+app.get(
+  "/api/review/status",
+  asyncHandler(async (req, res) => {
+    try {
+      const locked = await setting("review_locked", "false");
+      const message = await setting("review_lock_message", "");
+
+      res.json({
+        locked: locked === "true",
+        message
+      });
+    } catch (error) {
+      console.error("Review status error:", error.message);
+
+      res.status(503).json({
+        locked: true,
+        message: "المراجعة غير متاحة مؤقتًا."
+      });
+    }
+  })
+);
+
+app.post(
+  "/api/review/lock",
+  auth,
+  requirePermission("review.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    if (typeof req.body.locked !== "boolean") {
+      return res.status(400).json({
+        error: "locked must be boolean"
+      });
+    }
+
+    const message = String(
+      req.body.message || ""
+    ).slice(0, 500);
+
+    await saveSetting("review_locked", req.body.locked);
+    await saveSetting("review_lock_message", message);
+
+    await writeLog(
+      req,
+      "review_lock_changed",
+      String(req.body.locked)
+    );
+
+    res.json({
+      success: true,
+      locked: req.body.locked,
+      message
+    });
+  })
+);
+
+// ======================================================
+// SECURITY EVENTS
+// ======================================================
+
+app.get(
+  "/api/security/events",
+  auth,
+  requirePermission("security.view"),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || 100, 1),
+      300
+    );
+
+    const result = await db.query(
+      `SELECT id, event_type, username, result,
+              masked_ip, user_agent, created_at
+       FROM admin_security_events
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    res.json(result.rows);
+  })
+);
+
+// ======================================================
+// ACTIVITY LOGS
+// ======================================================
+
+app.get(
+  "/api/logs",
+  auth,
+  requirePermission("logs.view"),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || 100, 1),
+      300
+    );
+
+    const result = await db.query(
+      `SELECT id, admin_id, username, action, details, created_at
+       FROM admin_logs
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    res.json(result.rows);
+  })
+);
+
+// ======================================================
+// NOTIFICATIONS
+// ======================================================
+
+app.get(
+  "/api/notifications",
+  auth,
+  requirePermission("notifications.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT *
+       FROM admin_notifications
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+
+    res.json(result.rows);
+  })
+);
+
+app.post(
+  "/api/notifications",
+  auth,
+  requirePermission("notifications.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const title = String(req.body.title || "").trim();
+    const body = String(req.body.body || "").trim();
+    const audience = String(req.body.audience || "all");
+    const status = req.body.status || "draft";
+
+    if (!title || !body) {
+      return res.status(400).json({
+        error: "Title and body are required"
+      });
+    }
+
+    if (!["draft", "scheduled"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid notification status"
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO admin_notifications
+       (title, body, audience, status, scheduled_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        title.slice(0, 200),
+        body.slice(0, 5000),
+        audience.slice(0, 80),
+        status,
+        req.body.scheduled_at || null,
+        req.admin.id
+      ]
+    );
+
+    await writeLog(req, "notification_created", title);
+
+    res.status(201).json(result.rows[0]);
+  })
+);
+
+app.patch(
+  "/api/notifications/:id",
+  auth,
+  requirePermission("notifications.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+
+    const current = await db.query(
+      "SELECT * FROM admin_notifications WHERE id = $1",
       [id]
     );
 
     if (!current.rows.length) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Staff member not found" });
+      return res.status(404).json({
+        error: "Notification not found"
+      });
     }
 
-    const fields = [];
-    const values = [];
-    let n = 1;
+    const old = current.rows[0];
 
-    if (req.body.username !== undefined) {
-      const username = String(req.body.username).trim();
+    const title = req.body.title === undefined
+      ? old.title
+      : String(req.body.title).slice(0, 200);
 
-      if (username.length < 3) {
-        throw new Error("Invalid username");
-      }
+    const body = req.body.body === undefined
+      ? old.body
+      : String(req.body.body).slice(0, 5000);
 
-      const duplicate = await client.query(
-        `SELECT id FROM admin_account WHERE username=$1
-         UNION ALL
-         SELECT id FROM admin_staff WHERE username=$1 AND id<>$2`,
-        [username, id]
-      );
+    const audience = req.body.audience === undefined
+      ? old.audience
+      : String(req.body.audience).slice(0, 80);
 
-      if (duplicate.rows.length) {
-        throw new Error("Username already exists");
-      }
+    const status = req.body.status === undefined
+      ? old.status
+      : req.body.status;
 
-      fields.push(`username=$${n++}`);
-      values.push(username);
+    if (!["draft", "scheduled"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid status"
+      });
     }
-
-    if (req.body.active !== undefined) {
-      fields.push(`active=$${n++}`);
-      values.push(Boolean(req.body.active));
-    }
-
-    if (req.body.password) {
-      if (String(req.body.password).length < 10) {
-        throw new Error("Password must be at least 10 characters");
-      }
-
-      fields.push(`password_hash=$${n++}`);
-      values.push(await bcrypt.hash(String(req.body.password), 12));
-
-      fields.push(`must_change=TRUE`);
-    }
-
-    if (fields.length) {
-      fields.push("version=version+1");
-      values.push(id);
-
-      await client.query(
-        `UPDATE admin_staff SET ${fields.join(",")} WHERE id=$${n}`,
-        values
-      );
-    }
-
-    if (req.body.permissions !== undefined) {
-      await saveStaffPermissions(
-        client,
-        id,
-        validatePermissions(req.body.permissions)
-      );
-    }
-
-    await client.query("COMMIT");
-
-    await writeLog(req, "staff_updated", String(id));
 
     const result = await db.query(
-      `SELECT id,username,role,active,version,must_change,created_at
-       FROM admin_staff WHERE id=$1`,
+      `UPDATE admin_notifications
+       SET title = $1,
+           body = $2,
+           audience = $3,
+           status = $4,
+           scheduled_at = $5,
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+      [
+        title,
+        body,
+        audience,
+        status,
+        req.body.scheduled_at ?? old.scheduled_at,
+        id
+      ]
+    );
+
+    await writeLog(req, "notification_updated", String(id));
+
+    res.json(result.rows[0]);
+  })
+);
+
+// ======================================================
+// USERS - NOT CONNECTED
+// ======================================================
+
+app.get(
+  "/api/users",
+  auth,
+  requirePermission("users.view"),
+  (req, res) => {
+    res.json({
+      connected: false,
+      status: "unlinked",
+      message: "لا يوجد مصدر بيانات مستخدمي الموقع مربوط بلوحة الإدارة."
+    });
+  }
+);
+
+// ======================================================
+// CHESS ANALYTICS - NOT CONNECTED
+// ======================================================
+
+app.get(
+  "/api/chess/analytics",
+  auth,
+  requirePermission("chess.view"),
+  (req, res) => {
+    res.json({
+      connected: false,
+      status: "unlinked",
+      message: "تحليلات الشطرنج غير مربوطة بمصدر بيانات."
+    });
+  }
+);
+
+// ======================================================
+// SUPPORT
+// ======================================================
+
+app.get(
+  "/api/support",
+  auth,
+  requirePermission("support.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT *
+       FROM support_tickets
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+
+    res.json(result.rows);
+  })
+);
+
+app.post(
+  "/api/support",
+  publicLimiter,
+  asyncHandler(async (req, res) => {
+    const name = String(req.body.name || "").trim().slice(0, 120);
+    const email = String(req.body.email || "").trim().slice(0, 200);
+    const category = String(req.body.category || "general").slice(0, 80);
+    const message = String(req.body.message || "").trim();
+
+    if (!message || message.length < 5 || message.length > 5000) {
+      return res.status(400).json({
+        error: "Invalid message"
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO support_tickets
+       (name, email, category, message, status, source)
+       VALUES ($1, $2, $3, $4, 'new', 'public-api')
+       RETURNING id, created_at`,
+      [name, email, category, message]
+    );
+
+    res.status(201).json({
+      success: true,
+      ticket: result.rows[0]
+    });
+  })
+);
+
+app.patch(
+  "/api/support/:id",
+  auth,
+  requirePermission("support.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const status = String(req.body.status || "");
+
+    if (!["new", "in_progress", "resolved", "closed"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid ticket status"
+      });
+    }
+
+    const result = await db.query(
+      `UPDATE support_tickets
+       SET status = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [status, id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        error: "Ticket not found"
+      });
+    }
+
+    await writeLog(req, "support_ticket_updated", String(id));
+
+    res.json(result.rows[0]);
+  })
+);
+
+// ======================================================
+// ANNOUNCEMENTS / ADS
+// ======================================================
+
+app.get(
+  "/api/announcements",
+  auth,
+  requirePermission("ads.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT *
+       FROM admin_announcements
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+
+    res.json(result.rows);
+  })
+);
+
+app.post(
+  "/api/announcements",
+  auth,
+  requirePermission("ads.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const title = String(req.body.title || "").trim();
+    const body = String(req.body.body || "").trim();
+    const status = req.body.status || "draft";
+
+    if (!title || !body) {
+      return res.status(400).json({
+        error: "Title and body are required"
+      });
+    }
+
+    if (!["draft", "ready", "paused"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid announcement status"
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO admin_announcements
+       (title, body, status, starts_at, ends_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        title.slice(0, 200),
+        body.slice(0, 5000),
+        status,
+        req.body.starts_at || null,
+        req.body.ends_at || null,
+        req.admin.id
+      ]
+    );
+
+    await writeLog(req, "announcement_created", title);
+
+    res.status(201).json(result.rows[0]);
+  })
+);
+
+app.patch(
+  "/api/announcements/:id",
+  auth,
+  requirePermission("ads.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+
+    const current = await db.query(
+      "SELECT * FROM admin_announcements WHERE id = $1",
       [id]
     );
 
+    if (!current.rows.length) {
+      return res.status(404).json({
+        error: "Announcement not found"
+      });
+    }
+
+    const old = current.rows[0];
+
+    const title = req.body.title === undefined
+      ? old.title
+      : String(req.body.title).slice(0, 200);
+
+    const body = req.body.body === undefined
+      ? old.body
+      : String(req.body.body).slice(0, 5000);
+
+    const status = req.body.status === undefined
+      ? old.status
+      : req.body.status;
+
+    if (!["draft", "ready", "paused"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid status"
+      });
+    }
+
+    const result = await db.query(
+      `UPDATE admin_announcements
+       SET title = $1,
+           body = $2,
+           status = $3,
+           starts_at = $4,
+           ends_at = $5,
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+      [
+        title,
+        body,
+        status,
+        req.body.starts_at ?? old.starts_at,
+        req.body.ends_at ?? old.ends_at,
+        id
+      ]
+    );
+
+    await writeLog(req, "announcement_updated", String(id));
+
+    res.json(result.rows[0]);
+  })
+);
+
+app.delete(
+  "/api/announcements/:id",
+  auth,
+  requirePermission("ads.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `DELETE FROM admin_announcements
+       WHERE id = $1
+       RETURNING id`,
+      [Number(req.params.id)]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        error: "Announcement not found"
+      });
+    }
+
+    await writeLog(
+      req,
+      "announcement_deleted",
+      req.params.id
+    );
+
+    res.json({ success: true });
+  })
+);
+
+// ======================================================
+// REPORTS
+// ======================================================
+
+app.get(
+  "/api/reports/summary",
+  auth,
+  requirePermission("reports.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM page_views) AS page_views,
+        (SELECT COUNT(*)::int FROM admin_logs) AS admin_logs,
+        (SELECT COUNT(*)::int FROM admin_notifications) AS notifications,
+        (SELECT COUNT(*)::int FROM admin_announcements) AS announcements,
+        (SELECT COUNT(*)::int FROM support_tickets) AS support_tickets
+    `);
+
     res.json({
       ...result.rows[0],
-      permissions: await getStaffPermissions(id)
+      generated_at: new Date().toISOString()
     });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    if (e.message.includes("already exists")) {
-      return res.status(409).json({ error: e.message });
-    }
-    if (e.message.includes("Invalid") || e.message.includes("must be")) {
-      return res.status(400).json({ error: e.message });
-    }
-    throw e;
-  } finally {
-    client.release();
-  }
-}));
+  })
+);
 
-app.delete("/api/admins/:id", auth, requireSuperAdmin, actionLimiter, asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "Invalid ID" });
-  }
-
-  const result = await db.query(
-    "DELETE FROM admin_staff WHERE id=$1 RETURNING id,username",
-    [id]
-  );
-
-  if (!result.rows.length) {
-    return res.status(404).json({ error: "Staff member not found" });
-  }
-
-  await writeLog(req, "staff_deleted", result.rows[0].username);
-
-  res.json({ success: true });
-}));
-
-// TRACKING
-
-app.post("/api/track", publicLimiter, asyncHandler(async (req, res) => {
-  const page = String(req.body.page || "/").slice(0, 300);
-
-  await db.query(
-    `INSERT INTO page_views (page,ip,user_agent,created_at)
-     VALUES ($1,$2,$3,NOW())`,
-    [
-      page,
-      maskIp(req.ip),
-      String(req.headers["user-agent"] || "").slice(0, 300)
-    ]
-  );
-
-  res.json({ success: true });
-}));
-
-// OVERVIEW
-
-app.get("/api/overview", auth, requirePermission("overview.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(`
-    SELECT
-      COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int AS today,
-      COUNT(*) FILTER (WHERE created_at >= NOW()-INTERVAL '30 days')::int AS last_30_days,
-      COUNT(*) FILTER (WHERE created_at >= NOW()-INTERVAL '5 minutes')::int AS active_now
-    FROM page_views
-  `);
-
-  const maintenance = await setting("maintenance_enabled", "false");
-
-  res.json({
-    visitors: result.rows[0],
-    maintenance: maintenance === "true",
-    generated_at: new Date().toISOString()
-  });
-}));
-
-app.get("/api/visitors", auth, requirePermission("visitors.view"), asyncHandler(async (req, res) => {
-  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
-
-  const result = await db.query(
-    `SELECT id,page,ip,user_agent,created_at
-     FROM page_views ORDER BY created_at DESC LIMIT $1`,
-    [limit]
-  );
-
-  res.json(result.rows);
-}));
-
-// SYSTEM MONITORING
-
-app.get("/api/system", auth, requirePermission("system.view"), asyncHandler(async (req, res) => {
-  const start = Date.now();
-  await db.query("SELECT 1");
-
-  const memory = process.memoryUsage();
-
-  res.json({
-    api: "online",
-    database: "connected",
-    database_latency_ms: Date.now() - start,
-    uptime_seconds: Math.floor(process.uptime()),
-    node_version: process.version,
-    platform: process.platform,
-    hostname: os.hostname(),
-    memory: {
-      rss: memory.rss,
-      heap_used: memory.heapUsed,
-      heap_total: memory.heapTotal
-    },
-    cpu_count: os.cpus().length,
-    load_average: os.loadavg(),
-    render_control_enabled: false
-  });
-}));
-
-// MAINTENANCE
-
-app.get("/api/maintenance", auth, requirePermission("maintenance.manage"), asyncHandler(async (req, res) => {
-  res.json({
-    enabled: (await setting("maintenance_enabled", "false")) === "true",
-    message: await setting("maintenance_message", "")
-  });
-}));
-
-app.post("/api/maintenance", auth, requirePermission("maintenance.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const enabled = Boolean(req.body.enabled);
-  const message = String(req.body.message || "").slice(0, 500);
-
-  await saveSetting("maintenance_enabled", enabled);
-  await saveSetting("maintenance_message", message);
-
-  await writeLog(req, "maintenance_updated", String(enabled));
-
-  res.json({ success: true, enabled, message });
-}));
-
-// REVIEW LOCK
-
-app.get("/api/review/status", asyncHandler(async (req, res) => {
-  const locked = await setting("review_locked", "false");
-  const message = await setting("review_lock_message", "");
-
-  res.json({
-    locked: locked === "true",
-    message
-  });
-}));
-
-app.post("/api/review/lock", auth, requirePermission("review.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  if (typeof req.body.locked !== "boolean") {
-    return res.status(400).json({ error: "locked must be boolean" });
-  }
-
-  const message = String(req.body.message || "").slice(0, 500);
-
-  await saveSetting("review_locked", req.body.locked);
-  await saveSetting("review_lock_message", message);
-
-  await writeLog(req, "review_lock_changed", String(req.body.locked));
-
-  res.json({
-    success: true,
-    locked: req.body.locked,
-    message
-  });
-}));
-
-// SECURITY
-
-app.get("/api/security/events", auth, requirePermission("security.view"), asyncHandler(async (req, res) => {
-  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 300);
-
-  const result = await db.query(
-    `SELECT id,event_type,username,result,masked_ip,user_agent,created_at
-     FROM admin_security_events ORDER BY created_at DESC LIMIT $1`,
-    [limit]
-  );
-
-  res.json(result.rows);
-}));
-
-// LOGS
-
-app.get("/api/logs", auth, requirePermission("logs.view"), asyncHandler(async (req, res) => {
-  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 300);
-
-  const result = await db.query(
-    `SELECT id,admin_id,username,action,details,created_at
-     FROM admin_logs ORDER BY created_at DESC LIMIT $1`,
-    [limit]
-  );
-
-  res.json(result.rows);
-}));
-
-// NOTIFICATIONS
-
-app.get("/api/notifications", auth, requirePermission("notifications.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM admin_notifications ORDER BY created_at DESC LIMIT 200"
-  );
-  res.json(result.rows);
-}));
-
-app.post("/api/notifications", auth, requirePermission("notifications.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const title = String(req.body.title || "").trim();
-  const body = String(req.body.body || "").trim();
-  const audience = String(req.body.audience || "all");
-  const status = req.body.status || "draft";
-
-  if (!title || !body) {
-    return res.status(400).json({ error: "Title and body are required" });
-  }
-
-  if (!["draft", "scheduled"].includes(status)) {
-    return res.status(400).json({ error: "Invalid notification status" });
-  }
-
-  const result = await db.query(
-    `INSERT INTO admin_notifications
-     (title,body,audience,status,scheduled_at,created_by)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [
-      title.slice(0, 200),
-      body.slice(0, 5000),
-      audience.slice(0, 80),
-      status,
-      req.body.scheduled_at || null,
-      req.admin.id
-    ]
-  );
-
-  await writeLog(req, "notification_created", title);
-
-  res.status(201).json(result.rows[0]);
-}));
-
-app.patch("/api/notifications/:id", auth, requirePermission("notifications.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await db.query(
-    "SELECT * FROM admin_notifications WHERE id=$1",
-    [id]
-  );
-
-  if (!current.rows.length) {
-    return res.status(404).json({ error: "Notification not found" });
-  }
-
-  const old = current.rows[0];
-  const title = req.body.title === undefined ? old.title : String(req.body.title).slice(0, 200);
-  const body = req.body.body === undefined ? old.body : String(req.body.body).slice(0, 5000);
-  const audience = req.body.audience === undefined ? old.audience : String(req.body.audience).slice(0, 80);
-  const status = req.body.status === undefined ? old.status : req.body.status;
-
-  if (!["draft", "scheduled"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
-  const result = await db.query(
-    `UPDATE admin_notifications
-     SET title=$1,body=$2,audience=$3,status=$4,scheduled_at=$5,updated_at=NOW()
-     WHERE id=$6 RETURNING *`,
-    [title, body, audience, status, req.body.scheduled_at ?? old.scheduled_at, id]
-  );
-
-  await writeLog(req, "notification_updated", String(id));
-
-  res.json(result.rows[0]);
-}));
-
-// USERS MODULE: NOT CONNECTED
-
-app.get("/api/users", auth, requirePermission("users.view"), (req, res) => {
-  res.json({
-    connected: false,
-    status: "unlinked",
-    message: "لا يوجد مصدر بيانات مستخدمي الموقع مربوط بلوحة الإدارة."
-  });
-});
-
-// CHESS ANALYTICS: NOT CONNECTED
-
-app.get("/api/chess/analytics", auth, requirePermission("chess.view"), (req, res) => {
-  res.json({
-    connected: false,
-    status: "unlinked",
-    message: "تحليلات الشطرنج غير مربوطة بمصدر بيانات."
-  });
-});
-
-// SUPPORT
-
-app.get("/api/support", auth, requirePermission("support.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM support_tickets ORDER BY created_at DESC LIMIT 200"
-  );
-  res.json(result.rows);
-}));
-
-app.post("/api/support", publicLimiter, asyncHandler(async (req, res) => {
-  const name = String(req.body.name || "").trim().slice(0, 120);
-  const email = String(req.body.email || "").trim().slice(0, 200);
-  const category = String(req.body.category || "general").slice(0, 80);
-  const message = String(req.body.message || "").trim();
-
-  if (!message || message.length < 5 || message.length > 5000) {
-    return res.status(400).json({ error: "Invalid message" });
-  }
-
-  const result = await db.query(
-    `INSERT INTO support_tickets
-     (name,email,category,message,status,source)
-     VALUES ($1,$2,$3,$4,'new','public-api') RETURNING id,created_at`,
-    [name, email, category, message]
-  );
-
-  res.status(201).json({
-    success: true,
-    ticket: result.rows[0]
-  });
-}));
-
-app.patch("/api/support/:id", auth, requirePermission("support.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const status = String(req.body.status || "");
-
-  if (!["new", "in_progress", "resolved", "closed"].includes(status)) {
-    return res.status(400).json({ error: "Invalid ticket status" });
-  }
-
-  const result = await db.query(
-    `UPDATE support_tickets SET status=$1,updated_at=NOW()
-     WHERE id=$2 RETURNING *`,
-    [status, id]
-  );
-
-  if (!result.rows.length) {
-    return res.status(404).json({ error: "Ticket not found" });
-  }
-
-  await writeLog(req, "support_ticket_updated", String(id));
-
-  res.json(result.rows[0]);
-}));
-
-// ADVERTISEMENTS
-
-app.get("/api/announcements", auth, requirePermission("ads.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM admin_announcements ORDER BY created_at DESC LIMIT 200"
-  );
-  res.json(result.rows);
-}));
-
-app.post("/api/announcements", auth, requirePermission("ads.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const title = String(req.body.title || "").trim();
-  const body = String(req.body.body || "").trim();
-  const status = req.body.status || "draft";
-
-  if (!title || !body) {
-    return res.status(400).json({ error: "Title and body are required" });
-  }
-
-  if (!["draft", "ready", "paused"].includes(status)) {
-    return res.status(400).json({ error: "Invalid announcement status" });
-  }
-
-  const result = await db.query(
-    `INSERT INTO admin_announcements
-     (title,body,status,starts_at,ends_at,created_by)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [
-      title.slice(0, 200),
-      body.slice(0, 5000),
-      status,
-      req.body.starts_at || null,
-      req.body.ends_at || null,
-      req.admin.id
-    ]
-  );
-
-  await writeLog(req, "announcement_created", title);
-
-  res.status(201).json(result.rows[0]);
-}));
-
-app.patch("/api/announcements/:id", auth, requirePermission("ads.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const id = Number(req.params.id);
-  const current = await db.query(
-    "SELECT * FROM admin_announcements WHERE id=$1",
-    [id]
-  );
-
-  if (!current.rows.length) {
-    return res.status(404).json({ error: "Announcement not found" });
-  }
-
-  const old = current.rows[0];
-  const title = req.body.title === undefined ? old.title : String(req.body.title).slice(0, 200);
-  const body = req.body.body === undefined ? old.body : String(req.body.body).slice(0, 5000);
-  const status = req.body.status === undefined ? old.status : req.body.status;
-
-  if (!["draft", "ready", "paused"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
-
-  const result = await db.query(
-    `UPDATE admin_announcements
-     SET title=$1,body=$2,status=$3,starts_at=$4,ends_at=$5,updated_at=NOW()
-     WHERE id=$6 RETURNING *`,
-    [
-      title,
-      body,
-      status,
-      req.body.starts_at ?? old.starts_at,
-      req.body.ends_at ?? old.ends_at,
-      id
-    ]
-  );
-
-  await writeLog(req, "announcement_updated", String(id));
-
-  res.json(result.rows[0]);
-}));
-
-app.delete("/api/announcements/:id", auth, requirePermission("ads.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "DELETE FROM admin_announcements WHERE id=$1 RETURNING id",
-    [Number(req.params.id)]
-  );
-
-  if (!result.rows.length) {
-    return res.status(404).json({ error: "Announcement not found" });
-  }
-
-  await writeLog(req, "announcement_deleted", req.params.id);
-
-  res.json({ success: true });
-}));
-
-// REPORTS
-
-app.get("/api/reports/summary", auth, requirePermission("reports.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(`
-    SELECT
-      (SELECT COUNT(*)::int FROM page_views) AS page_views,
-      (SELECT COUNT(*)::int FROM admin_logs) AS admin_logs,
-      (SELECT COUNT(*)::int FROM admin_notifications) AS notifications,
-      (SELECT COUNT(*)::int FROM admin_announcements) AS announcements,
-      (SELECT COUNT(*)::int FROM support_tickets) AS support_tickets
-  `);
-
-  res.json({
-    ...result.rows[0],
-    generated_at: new Date().toISOString()
-  });
-}));
-
+// ======================================================
 // SETTINGS
+// ======================================================
 
-app.get("/api/settings", auth, requirePermission("settings.view"), asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT key,value FROM admin_settings WHERE key = ANY($1)",
-    [SAFE_SETTINGS]
-  );
+app.get(
+  "/api/settings",
+  auth,
+  requirePermission("settings.view"),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT key, value
+       FROM admin_settings
+       WHERE key = ANY($1)`,
+      [SAFE_SETTINGS]
+    );
 
-  const settings = {};
-  for (const row of result.rows) settings[row.key] = row.value;
+    const settings = {};
 
-  res.json(settings);
-}));
-
-app.patch("/api/settings", auth, requirePermission("settings.manage"), actionLimiter, asyncHandler(async (req, res) => {
-  const entries = Object.entries(req.body || {});
-
-  if (!entries.length || entries.length > 20) {
-    return res.status(400).json({ error: "Invalid settings payload" });
-  }
-
-  for (const [key, value] of entries) {
-    if (!SAFE_SETTINGS.includes(key)) {
-      return res.status(400).json({ error: "Setting not allowed: " + key });
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
     }
 
-    if (typeof value !== "string" && typeof value !== "boolean") {
-      return res.status(400).json({ error: "Invalid setting value" });
+    res.json(settings);
+  })
+);
+
+app.patch(
+  "/api/settings",
+  auth,
+  requirePermission("settings.manage"),
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const entries = Object.entries(req.body || {});
+
+    if (!entries.length || entries.length > 20) {
+      return res.status(400).json({
+        error: "Invalid settings payload"
+      });
     }
 
-    await saveSetting(key, String(value).slice(0, 1000));
-  }
+    for (const [key, value] of entries) {
+      if (!SAFE_SETTINGS.includes(key)) {
+        return res.status(400).json({
+          error: "Setting not allowed: " + key
+        });
+      }
 
-  await writeLog(req, "settings_updated", entries.map(x => x[0]).join(","));
+      if (
+        typeof value !== "string" &&
+        typeof value !== "boolean"
+      ) {
+        return res.status(400).json({
+          error: "Invalid setting value"
+        });
+      }
 
-  res.json({ success: true });
-}));
+      await saveSetting(
+        key,
+        String(value).slice(0, 1000)
+      );
+    }
 
+    await writeLog(
+      req,
+      "settings_updated",
+      entries.map(entry => entry[0]).join(",")
+    );
+
+    res.json({ success: true });
+  })
+);
+
+// ======================================================
 // MODULE STATUS
+// ======================================================
 
-app.get("/api/modules/status", auth, async (req, res) => {
-  res.json({
-    users: { connected: false, status: "unlinked" },
-    chess_analytics: { connected: false, status: "unlinked" },
-    notifications: {
-      connected: true,
-      delivery_enabled: false,
-      status: "drafts_only"
-    },
-    advertisements: {
-      connected: true,
-      site_integration: false,
-      status: "dashboard_only"
-    },
-    support: {
-      intake_api_available: true,
-      website_form_linked: false
-    },
-    render_control: {
-      enabled: false
-    }
-  });
-});
+app.get(
+  "/api/modules/status",
+  auth,
+  (req, res) => {
+    res.json({
+      users: {
+        connected: false,
+        status: "unlinked"
+      },
 
-// BACKUP EXPORT - SUPER ADMIN ONLY
+      chess_analytics: {
+        connected: false,
+        status: "unlinked"
+      },
 
-app.get("/api/backups/export", auth, requireSuperAdmin, actionLimiter, asyncHandler(async (req, res) => {
-  const tables = [
-    "admin_settings",
-    "admin_logs",
-    "page_views",
-    "admin_staff_permissions",
-    "admin_security_events",
-    "admin_notifications",
-    "admin_announcements",
-    "support_tickets",
-    "admin_backup_records"
-  ];
+      notifications: {
+        connected: true,
+        delivery_enabled: false,
+        status: "drafts_only"
+      },
 
-  const backup = {
-    product: "BASAM COMMAND CENTER",
-    exported_at: new Date().toISOString(),
-    tables: {}
-  };
+      advertisements: {
+        connected: true,
+        site_integration: false,
+        status: "dashboard_only"
+      },
 
-  let rowsCount = 0;
+      support: {
+        intake_api_available: true,
+        website_form_linked: false
+      },
 
-  for (const table of tables) {
-    const result = await db.query(`SELECT * FROM ${table}`);
-    backup.tables[table] = result.rows;
-    rowsCount += result.rows.length;
-  }
-
-  const filename = `basam-dashboard-backup-${Date.now()}.json`;
-
-  await db.query(
-    `INSERT INTO admin_backup_records (filename,exported_by,rows_count)
-     VALUES ($1,$2,$3)`,
-    [filename, req.admin.id, rowsCount]
-  );
-
-  await writeLog(req, "backup_exported", filename);
-
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
-  res.send(JSON.stringify(backup, null, 2));
-}));
-
-// SITE CONTROL - DISABLED
-
-app.post("/api/site/:action", auth, requireSuperAdmin, actionLimiter, (req, res) => {
-  if (!ALLOW_RENDER_CONTROL) {
-    return res.status(403).json({
-      error: "Render control is disabled",
-      enabled: false
+      render_control: {
+        enabled: false
+      }
     });
   }
+);
 
-  res.status(403).json({
-    error: "Render control integration is not configured"
-  });
-});
+// ======================================================
+// BACKUP EXPORT - SUPER ADMIN ONLY
+// ======================================================
 
+app.get(
+  "/api/backups/export",
+  auth,
+  requireSuperAdmin,
+  actionLimiter,
+  asyncHandler(async (req, res) => {
+    const backup = {
+      product: "BASAM COMMAND CENTER",
+      exported_at: new Date().toISOString(),
+      tables: {}
+    };
+
+    let rowsCount = 0;
+
+    const safeQueries = {
+      admin_settings: `
+        SELECT key, value
+        FROM admin_settings
+        WHERE key = ANY($1)
+      `,
+
+      admin_logs: `
+        SELECT id, admin_id, username, action, details, created_at
+        FROM admin_logs
+      `,
+
+      page_views: `
+        SELECT id, page, ip, user_agent, created_at
+        FROM page_views
+      `,
+
+      admin_staff_permissions: `
+        SELECT staff_id, permission_key, granted, updated_at
+        FROM admin_staff_permissions
+      `,
+
+      admin_security_events: `
+        SELECT id, event_type, username, result,
+               masked_ip, user_agent, created_at
+        FROM admin_security_events
+      `,
+
+      admin_notifications: `
+        SELECT id, title, body, audience, status,
+               scheduled_at, created_by, created_at, updated_at
+        FROM admin_notifications
+      `,
+
+      admin_announcements: `
+        SELECT id, title, body, status, starts_at,
+               ends_at, created_by, created_at, updated_at
+        FROM admin_announcements
+      `,
+
+      support_tickets: `
+        SELECT id, name, email, category, message,
+               status, source, created_at, updated_at
+        FROM support_tickets
+      `,
+
+      admin_backup_records: `
+        SELECT id, filename, exported_at, exported_by, rows_count
+        FROM admin_backup_records
+      `
+    };
+
+    for (const [table, query] of Object.entries(safeQueries)) {
+      const result = table === "admin_settings"
+        ? await db.query(query, [SAFE_SETTINGS])
+        : await db.query(query);
+
+      backup.tables[table] = result.rows;
+      rowsCount += result.rows.length;
+    }
+
+    const filename = `basam-dashboard-backup-${Date.now()}.json`;
+
+    await db.query(
+      `INSERT INTO admin_backup_records
+       (filename, exported_by, rows_count)
+       VALUES ($1, $2, $3)`,
+      [filename, req.admin.id, rowsCount]
+    );
+
+    await writeLog(req, "backup_exported", filename);
+
+    res.setHeader(
+      "Content-Type",
+      "application/json; charset=utf-8"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`
+    );
+
+    res.send(JSON.stringify(backup, null, 2));
+  })
+);
+
+// ======================================================
+// RENDER CONTROL - DISABLED
+// ======================================================
+
+app.post(
+  "/api/site/:action",
+  auth,
+  requireSuperAdmin,
+  actionLimiter,
+  (req, res) => {
+    if (!ALLOW_RENDER_CONTROL) {
+      return res.status(403).json({
+        error: "Render control is disabled",
+        enabled: false
+      });
+    }
+
+    res.status(403).json({
+      error: "Render control integration is not configured"
+    });
+  }
+);
+
+// ======================================================
 // ERROR HANDLER
+// ======================================================
 
-app.use((err, req, res, next) => {
-  console.error("API error:", err.message);
+app.use((error, req, res, next) => {
+  console.error("API error:", error.message);
 
-  if (res.headersSent) return next(err);
+  if (res.headersSent) {
+    return next(error);
+  }
 
   res.status(500).json({
     error: "Internal server error"
   });
 });
 
-// START
+// ======================================================
+// START SERVER
+// ======================================================
 
 init()
   .then(() => {
