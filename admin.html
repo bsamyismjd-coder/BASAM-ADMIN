@@ -312,7 +312,7 @@ function setRoleVisibility() {
  });
  document.getElementById("accountInfo").textContent =
   currentUser
-   ? "الحساب: " + currentUser.username + " | الرتبة: " + currentUser.role
+   ? "الحساب: " + currentUser.username + " | الرتبة: " + (currentUser.role || "قيد التحقق")
    : "";
 }
 function setPasswordChangeRequired(required) {
@@ -323,6 +323,8 @@ function setPasswordChangeRequired(required) {
   }
  });
  if (required) {
+  document.getElementById("newUsername").value =
+   currentUser?.username || document.getElementById("username").value.trim();
   const securityButton = document.querySelector('[data-tab="security"]');
   tab("security", securityButton);
  }
@@ -338,9 +340,12 @@ function tab(id, button) {
  document.querySelectorAll(".section").forEach(x => x.classList.remove("active"));
  document.querySelectorAll(".nav button").forEach(x => x.classList.remove("active"));
  section.classList.add("active");
- button.classList.add("active");
+ if (button) button.classList.add("active");
  if (id === "staff") loadStaff();
 }
+// ========================================
+// LOGIN
+// ========================================
 async function login() {
  const errorBox = document.getElementById("loginError");
  errorBox.textContent = "جارٍ تسجيل الدخول...";
@@ -352,15 +357,20 @@ async function login() {
     password:document.getElementById("password").value
    })
   });
-  if (!data.token) throw Error("لم يستلم الموقع رمز الجلسة من الخادم");
+  if (!data.token) {
+   throw Error("لم يستلم الموقع رمز الجلسة من الخادم");
+  }
   token = data.token;
   sessionStorage.setItem("basam_token", token);
-  await initializeDashboard();
+  await initializeDashboard(data);
  } catch (error) {
   errorBox.textContent = error.message;
  }
 }
-async function initializeDashboard() {
+// ========================================
+// INITIALIZE DASHBOARD
+// ========================================
+async function initializeDashboard(loginData = {}) {
  try {
   const me = await request("/api/me");
   currentUser = {
@@ -380,13 +390,30 @@ async function initializeDashboard() {
    logout();
    return;
   }
-  if (error.mustChangePassword) {
-   alert("يجب تغيير كلمة المرور الأولية.");
+  // الحساب الجديد: السماح بفتح شاشة تغيير كلمة المرور
+  if (
+   error.mustChangePassword ||
+   loginData.mustChangePassword === true ||
+   loginData.must_change === true
+  ) {
+   const user = loginData.user || loginData.admin || loginData;
+   currentUser = {
+    id:user.id || null,
+    username:user.username || document.getElementById("username").value.trim(),
+    role:user.role || null,
+    mustChangePassword:true
+   };
+   showDashboard();
+   setRoleVisibility();
+   setPasswordChangeRequired(true);
    return;
   }
   alert(error.message);
  }
 }
+// ========================================
+// REFRESH
+// ========================================
 async function refresh() {
  if (!currentUser) return;
  if (currentUser.mustChangePassword) {
@@ -630,8 +657,14 @@ async function changeCredentials() {
    token = d.token;
    sessionStorage.setItem("basam_token", token);
   }
-  currentUser.username = d.username || username;
-  currentUser.mustChangePassword = false;
+  // استرجاع بيانات الحساب والرتبة بعد التغيير
+  const me = await request("/api/me");
+  currentUser = {
+   id:me.id,
+   username:me.username,
+   role:me.role,
+   mustChangePassword:me.mustChangePassword === true
+  };
   setRoleVisibility();
   setPasswordChangeRequired(false);
   document.getElementById("oldPassword").value = "";
