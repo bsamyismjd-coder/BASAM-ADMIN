@@ -778,6 +778,12 @@ app.post(
 // ========================================
 
 app.post("/api/track", trackLimiter, async (req, res) => {
+  console.log("[TRACK] Request received", {
+    origin: req.headers.origin || "none",
+    referrer: req.body?.referrer || "none",
+    userAgent: req.headers["user-agent"] || "none"
+  });
+
   try {
     const ua = req.headers["user-agent"] || "";
 
@@ -796,22 +802,28 @@ app.post("/api/track", trackLimiter, async (req, res) => {
     let source = "مباشر";
 
     try {
-      if (req.body && req.body.referrer) {
+      if (req.body?.referrer) {
         source = new URL(req.body.referrer).hostname.slice(0, 150);
       }
     } catch {}
 
-    await db.query(
+    const result = await db.query(
       `INSERT INTO page_views(device, browser, source)
-       VALUES($1, $2, $3)`,
+       VALUES($1, $2, $3)
+       RETURNING id, created_at`,
       [device, browser, source]
     );
+
+    console.log("[TRACK] Saved successfully:", result.rows[0]);
 
     return res.status(204).end();
 
   } catch (error) {
-    console.error("Tracking error:", error.message);
-    return res.status(204).end();
+    console.error("[TRACK] SAVE FAILED:", error.message);
+
+    return res.status(500).json({
+      error: "Tracking failed"
+    });
   }
 });
 
